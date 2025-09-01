@@ -1,0 +1,23 @@
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: 'Cargo command to run (example: build, test, clippy -- -D warnings)'
+        required: true
+        type: string
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run cargo
+        run: cargo ${{ inputs.command }}
