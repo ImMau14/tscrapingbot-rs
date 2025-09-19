@@ -1,0 +1,102 @@
+name: Rust Cross-Compilation Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # Linux targets
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact_name: myapp-linux-x86_64
+            use_cross: false
+          - os: ubuntu-22.04
+            target: i686-unknown-linux-gnu
+            artifact_name: myapp-linux-i686
+            use_cross: true
+
+          # Windows targets
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: myapp-windows-x86_64.exe
+            use_cross: false
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            artifact_name: myapp-windows-i686.exe
+            use_cross: false
+    
+    runs-on: ${{ matrix.os }}
+    continue-on-error: false
+
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+          toolchain: stable
+
+      - name: Install cross (only if necessary)
+        if: matrix.use_cross
+        run: cargo install cross --locked
+
+      - name: Compile
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Prepare binary for upload
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/*.exe ${{ matrix.artifact_name }}
+          else
+            cp target/${{ matrix.target }}/release/myapp ${{ matrix.artifact_name }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+
+  create-release-assets:
+    name: Create release assets
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: List downloaded files
+        run: find ./artifacts -type f
+
+      - name: Prepare files for release
+        run: |
+          cd artifacts
+          for file in *; do
+            if [[ "$file" == *".exe" ]]; then
+              zip "${file%.exe}.zip" "$file"
+            else
+              tar czf "$file.tar.gz" "$file"
+            fi
+          done
+          ls -la
+
+      - name: Attach binaries to the release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./artifacts/*.zip
+            ./artifacts/*.tar.gz
