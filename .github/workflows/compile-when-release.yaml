@@ -12,28 +12,21 @@ jobs:
           # Linux targets
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact_name: myapp-linux-x86_64
-            use_cross: false
-          - os: ubuntu-22.04
-            target: i686-unknown-linux-gnu
-            artifact_name: myapp-linux-i686
-            use_cross: true
+            artifact_name: tsbot-linux-x86_64
 
           # Windows targets
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: myapp-windows-x86_64.exe
-            use_cross: false
+            artifact_name: tsbot-windows-x86_64.exe
           - os: windows-latest
             target: i686-pc-windows-msvc
-            artifact_name: myapp-windows-i686.exe
-            use_cross: false
+            artifact_name: tsbot-windows-i686.exe
     
     runs-on: ${{ matrix.os }}
     continue-on-error: false
 
     steps:
-      - name: Code checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Rust
@@ -42,25 +35,25 @@ jobs:
           target: ${{ matrix.target }}
           toolchain: stable
 
-      - name: Install cross (only if necessary)
-        if: matrix.use_cross
-        run: cargo install cross --locked
-
-      - name: Compile
+      - name: Compile project (Linux)
+        if: matrix.os == 'ubuntu-22.04'
         run: |
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+          cargo build --release --target ${{ matrix.target }}
 
-      - name: Prepare binary for upload
+      - name: Compile project (Windows)
+        if: matrix.os == 'windows-latest'
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/*.exe ${{ matrix.artifact_name }}
-          else
-            cp target/${{ matrix.target }}/release/myapp ${{ matrix.artifact_name }}
-          fi
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary for upload (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          cp target/${{ matrix.target }}/release/tscrapingbot-rs ${{ matrix.artifact_name }}
+
+      - name: Prepare binary for upload (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Copy-Item "target/${{ matrix.target }}/release/tscrapingbot-rs.exe" -Destination "${{ matrix.artifact_name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -72,7 +65,11 @@ jobs:
     name: Create release assets
     runs-on: ubuntu-latest
     needs: build
-    
+
+    permissions:
+        contents: write
+        packages: read
+
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -85,15 +82,17 @@ jobs:
       - name: Prepare files for release
         run: |
           cd artifacts
-          for file in *; do
-            if [[ "$file" == *".exe" ]]; then
-              zip "${file%.exe}.zip" "$file"
-            else
-              tar czf "$file.tar.gz" "$file"
-            fi
+          find . -type f -name '*.exe' -print0 | while IFS= read -r -d '' exe; do
+            base=$(basename "$exe" .exe)
+            echo "Zipping exe: $exe -> ${base}.zip"
+            zip -j "${base}.zip" "$exe"
+          done
+          find . -type f ! -name '*.exe' ! -name '*.zip' -print0 | while IFS= read -r -d '' f; do
+            base=$(basename "$f")
+            echo "Tarring file: $f -> ${base}.tar.gz"
+            tar czf "${base}.tar.gz" -C "$(dirname "$f")" "$(basename "$f")"
           done
           ls -la
-
       - name: Attach binaries to the release
         uses: softprops/action-gh-release@v1
         with:

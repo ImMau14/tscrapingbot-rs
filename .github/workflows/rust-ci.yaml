@@ -20,6 +20,7 @@ jobs:
     uses: ./.github/workflows/common-rust-steps.yaml
     with:
       command: test
+    secrets: inherit
 
   clippy:
     uses: ./.github/workflows/common-rust-steps.yaml
