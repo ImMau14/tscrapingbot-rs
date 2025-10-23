@@ -37,3 +37,18 @@ async fn help_command_integration() {
         "Unexpected help text: {text}"
     );
 }
+
+#[tokio::test]
+#[serial]
+async fn ask_command_integration() {
+    let mock = MockMessageText::new().text("/ask Write exactly: Hi");
+    let handler = get_update_handler();
+    let mut bot = MockBot::new(mock, handler);
+    bot.dispatch().await;
+
+    let responses = bot.get_responses();
+    let last = responses.sent_messages.last().expect("no response");
+    let text = last.text().unwrap_or_default();
+
+    assert!(text.contains("Hi"), "Unexpected help text: {text}");
+}

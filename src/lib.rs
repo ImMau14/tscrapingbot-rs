@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod gemini;
 pub mod handlers;
 pub mod server;
 pub mod trace;
@@ -7,12 +8,13 @@ pub mod trace;
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 use config::AppConfig;
+use gemini::Gemini;
 use handlers::get_update_handler;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 use teloxide::dispatching::Dispatcher;
 use teloxide::error_handlers::LoggingErrorHandler;
-use teloxide::prelude::*;
 use teloxide::update_listeners::webhooks;
+use teloxide::{dptree, prelude::*};
 use tokio::signal;
 use trace::init_tracing;
 use tracing::{error, info};
@@ -32,8 +34,11 @@ pub async fn run() -> Result<(), BoxError> {
 
     let bot = Bot::new(cfg.token.clone());
 
+    let gemini = Arc::new(Gemini::new(cfg.gemini_api_key));
+
     let handler = get_update_handler();
     let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
+        .dependencies(dptree::deps![gemini.clone()])
         .enable_ctrlc_handler()
         .build();
 

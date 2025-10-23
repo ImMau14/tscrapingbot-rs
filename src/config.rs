@@ -15,6 +15,7 @@ pub enum ConfigError {
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub token: String,
+    pub gemini_api_key: String,
     pub hosting: bool,
     pub webhook_url: Option<url::Url>,
     pub port: u16,
@@ -28,6 +29,9 @@ impl AppConfig {
 
         let token =
             env::var("TELOXIDE_TOKEN").map_err(|_| ConfigError::MissingEnv("TELOXIDE_TOKEN"))?;
+
+        let gemini_api_key =
+            env::var("GEMINI_API_KEY").map_err(|_| ConfigError::MissingEnv("GEMINI_API_KEY"))?;
 
         let hosting_raw = env::var("HOSTING").map_err(|_| ConfigError::MissingEnv("HOSTING"))?;
         let hosting = match hosting_raw.to_lowercase().as_str() {
@@ -52,6 +56,7 @@ impl AppConfig {
 
         Ok(AppConfig {
             token,
+            gemini_api_key,
             hosting,
             webhook_url,
             port,
@@ -70,6 +75,7 @@ mod tests {
     fn from_env_parses_all() {
         unsafe {
             env::set_var("TELOXIDE_TOKEN", "tok");
+            env::set_var("GEMINI_API_KEY", "asd");
             env::set_var("HOSTING", "true");
             env::set_var("WEBHOOK_URL", "https://example.com/hook");
             env::set_var("PORT", "1234");
@@ -77,6 +83,7 @@ mod tests {
 
         let cfg = AppConfig::from_env().unwrap();
         assert_eq!(cfg.token, "tok");
+        assert_eq!(cfg.gemini_api_key, "asd");
         assert!(cfg.hosting);
         assert_eq!(cfg.port, 1234);
         assert_eq!(

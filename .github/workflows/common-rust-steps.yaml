@@ -18,6 +18,11 @@ jobs:
         with:
           toolchain: stable
           override: true
+      
+      - name: Load Gemini API Key if is tests
+        if: inputs.command == 'test'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       - name: Run cargo
         run: cargo ${{ inputs.command }}
