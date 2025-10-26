@@ -1,11 +1,13 @@
 mod ask;
 use ask::ask;
 
+pub mod utils;
+
 use crate::commands::Command;
 use crate::gemini::Gemini;
 use std::sync::Arc;
+use teloxide::prelude::*;
 use teloxide::utils::command::BotCommands;
-use teloxide::{prelude::*, types::ChatAction};
 use tracing::info;
 
 // NOTE: use `Bot` (not `AutoSend<Bot>`) so the code works without enabling
@@ -17,11 +19,9 @@ pub async fn handle_command(
     gemini: Arc<Gemini>,
 ) -> ResponseResult<()> {
     info!("Update received: chat_id = {}", msg.chat.id);
-    bot.send_chat_action(msg.chat.id, ChatAction::Typing)
-        .await?;
 
     match cmd {
-        Command::Ask(text) => ask(bot, msg, text, gemini.clone()).await,
+        Command::Ask(text) => ask(bot, msg, text, gemini.clone()).await?,
         Command::Help => {
             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                 .await?;
