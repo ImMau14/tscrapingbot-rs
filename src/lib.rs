@@ -2,6 +2,7 @@ pub mod commands;
 pub mod config;
 pub mod gemini;
 pub mod handlers;
+pub mod prompts;
 pub mod server;
 pub mod trace;
 

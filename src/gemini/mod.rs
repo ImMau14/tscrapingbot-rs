@@ -193,7 +193,7 @@ impl GeminiRequestBuilder {
     }
 
     // =========================================================================
-    // SEND (MODIFIED)
+    // SEND
     // =========================================================================
 
     // Send the request using the accumulated parts.

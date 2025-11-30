@@ -1,0 +1,1 @@
+Break down the problem into logical steps, and solve each step before moving on to the next. Try to give quite detailed answers, but not too long.
