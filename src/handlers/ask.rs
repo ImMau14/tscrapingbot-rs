@@ -6,7 +6,11 @@ use crate::{
     prompts::{GeminiPrompt, Prompt},
 };
 use std::sync::Arc;
-use teloxide::{prelude::*, types::ChatAction, types::ParseMode};
+use teloxide::{
+    prelude::*,
+    types::ParseMode,
+    types::{ChatAction, ThreadId},
+};
 
 pub async fn ask(
     bot: Bot,
@@ -14,11 +18,12 @@ pub async fn ask(
     text: String,
     gemini: Arc<Gemini>,
 ) -> Result<(), teloxide::RequestError> {
-    // Chat id to reply.
     let chat_id = msg.chat.id;
+    let thread_id: Option<ThreadId> = msg.thread_id;
 
     // Keep-alive typing indicator while we wait for model(s).
-    let mut keep = ChatActionKeepAlive::spawn(bot.clone(), chat_id, ChatAction::Typing, 4);
+    let mut keep =
+        ChatActionKeepAlive::spawn(bot.clone(), chat_id, thread_id, ChatAction::Typing, 4);
 
     // Get prompts struct
     let prompts = GeminiPrompt::new();
@@ -39,7 +44,15 @@ pub async fn ask(
     {
         Ok(response) => escape_telegram_code_entities(&response.formatted(false)),
         Err(e) => {
-            bot.send_message(chat_id, format!("Error: {e}")).await?;
+            // Send error to same chat / thread
+            let send_err = if let Some(tid) = thread_id {
+                bot.send_message(chat_id, format!("Error: {e}"))
+                    .message_thread_id(tid)
+                    .await
+            } else {
+                bot.send_message(chat_id, format!("Error: {e}")).await
+            };
+            let _ = send_err;
             return Ok(());
         }
     };
@@ -48,14 +61,19 @@ pub async fn ask(
     keep.shutdown().await;
 
     // Reply to user
-    match bot
-        .send_message(chat_id, res)
-        .parse_mode(ParseMode::Html)
-        .await
-    {
+    let send_req = if let Some(tid) = thread_id {
+        bot.send_message(chat_id, res)
+            .message_thread_id(tid)
+            .parse_mode(ParseMode::Html)
+    } else {
+        bot.send_message(chat_id, res).parse_mode(ParseMode::Html)
+    };
+
+    match send_req.await {
         Ok(_) => Ok(()),
         Err(e) => {
-            bot.send_message(chat_id, e.to_string()).await?;
+            // Try to notify main chat if sending fails
+            let _ = bot.send_message(chat_id, e.to_string()).await;
             Err(e)
         }
     }

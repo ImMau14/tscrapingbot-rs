@@ -1,6 +1,9 @@
 // Manager that keeps a chat action being sent periodically.
 
-use teloxide::{prelude::*, types::ChatAction};
+use teloxide::{
+    prelude::*,
+    types::{ChatAction, ChatId, ThreadId},
+};
 use tokio::{
     sync::oneshot,
     task::JoinHandle,
@@ -15,28 +18,36 @@ pub struct ChatActionKeepAlive {
     handle: Option<JoinHandle<()>>,
 }
 
-// The manager
 impl ChatActionKeepAlive {
     // Spawn background task that periodically sends the given ChatAction.
-    pub fn spawn(bot: Bot, chat_id: ChatId, action: ChatAction, interval_secs: u64) -> Self {
-        // Create a oneshot channel to request shutdown.
+    // thread_id is optional; when Some(tid) the chat action will be sent
+    // With .message_thread_id(tid) so it appears in the forum topic.
+    pub fn spawn(
+        bot: Bot,
+        chat_id: ChatId,
+        thread_id: Option<ThreadId>,
+        action: ChatAction,
+        interval_secs: u64,
+    ) -> Self {
         let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
-
-        // Spawn an asynchronous task that sends the chat action on a ticker.
         let handle = tokio::spawn(async move {
-            // Create a periodic ticker using the provided interval.
             let mut ticker = interval(Duration::from_secs(interval_secs));
             loop {
                 tokio::select! {
-                    // On each tick, attempt to send the chat action.
                     _ = ticker.tick() => {
-                        if let Err(err) = bot.send_chat_action(chat_id, action).await {
-                            // Log a warning if sending fails.
+                        // Build the request, attach message_thread_id only if present.
+                        let send_req = if let Some(tid) = thread_id {
+                            bot.send_chat_action(chat_id, action).message_thread_id(tid)
+                        } else {
+                            bot.send_chat_action(chat_id, action)
+                        };
+
+                        if let Err(err) = send_req.await {
                             tracing::warn!("send_chat_action failed: {:?}", err);
                         }
                     }
 
-                    // Break the loop when a stop signal is received.
+                    // Stop signal received.
                     _ = &mut stop_rx => {
                         break;
                     }
@@ -44,7 +55,6 @@ impl ChatActionKeepAlive {
             }
         });
 
-        // Return the manager containing the stop sender and task handle.
         Self {
             stop_tx: Some(stop_tx),
             handle: Some(handle),
@@ -53,27 +63,24 @@ impl ChatActionKeepAlive {
 
     // Gracefully stop the background task and await its completion.
     pub async fn shutdown(&mut self) {
-        // Send stop signal if available; ignore send error.
         if let Some(tx) = self.stop_tx.take() {
             let _ = tx.send(());
         }
 
-        // Await the task if we have its handle; ignore join error.
         if let Some(h) = self.handle.take() {
             let _ = h.await;
         }
     }
 }
 
-// Fallback cleanup to ensure the task is stopped on Drop.
 impl Drop for ChatActionKeepAlive {
     fn drop(&mut self) {
-        // Try to notify the task to stop.
+        // Request stop synchronously if still available.
         if let Some(tx) = self.stop_tx.take() {
             let _ = tx.send(());
         }
 
-        // Abort the task if it still exists.
+        // If the task still exists, abort it to avoid leaking.
         if let Some(h) = &self.handle {
             h.abort();
         }
