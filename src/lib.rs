@@ -12,10 +12,12 @@ use config::AppConfig;
 use gemini::Gemini;
 use handlers::get_update_handler;
 use std::{net::SocketAddr, sync::Arc};
-use teloxide::dispatching::Dispatcher;
-use teloxide::error_handlers::LoggingErrorHandler;
-use teloxide::update_listeners::webhooks;
-use teloxide::{dptree, prelude::*};
+use teloxide::{
+    dispatching::Dispatcher,
+    error_handlers::LoggingErrorHandler,
+    update_listeners::webhooks,
+    {dptree, prelude::*},
+};
 use tokio::signal;
 use trace::init_tracing;
 use tracing::{error, info};
