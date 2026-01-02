@@ -16,7 +16,7 @@ pub enum ConfigError {
 pub struct AppConfig {
     pub database_url: String,
     pub token: String,
-    pub gemini_api_key: String,
+    pub groq_api_key: String,
     pub hosting: bool,
     pub webhook_url: Option<url::Url>,
     pub port: u16,
@@ -27,7 +27,7 @@ impl std::fmt::Debug for AppConfig {
         f.debug_struct("AppConfig")
             .field("database_url", &"<redacted>")
             .field("token", &"<redacted>")
-            .field("gemini_api_key", &"<redacted>")
+            .field("groq_api_key", &"<redacted>")
             .field("hosting", &self.hosting)
             .field("webhook_url", &self.webhook_url)
             .field("port", &self.port)
@@ -46,7 +46,7 @@ impl AppConfig {
         };
 
         if load_dotenv {
-            let _ = dotenv(); // idempotente y no sobreescribe variables existentes
+            let _ = dotenv();
         }
 
         let database_url =
@@ -55,8 +55,8 @@ impl AppConfig {
         let token =
             env::var("TELOXIDE_TOKEN").map_err(|_| ConfigError::MissingEnv("TELOXIDE_TOKEN"))?;
 
-        let gemini_api_key =
-            env::var("GEMINI_API_KEY").map_err(|_| ConfigError::MissingEnv("GEMINI_API_KEY"))?;
+        let groq_api_key =
+            env::var("GROQ_API_KEY").map_err(|_| ConfigError::MissingEnv("GROQ_API_KEY"))?;
 
         let hosting_raw = env::var("HOSTING").map_err(|_| ConfigError::MissingEnv("HOSTING"))?;
 
@@ -83,7 +83,7 @@ impl AppConfig {
         Ok(Self {
             database_url,
             token,
-            gemini_api_key,
+            groq_api_key,
             hosting,
             webhook_url,
             port,
@@ -107,7 +107,7 @@ mod tests {
         unsafe {
             env::set_var("DATABASE_URL", "postgresql://hello");
             env::set_var("TELOXIDE_TOKEN", "tok");
-            env::set_var("GEMINI_API_KEY", "asd");
+            env::set_var("GROQ_API_KEY", "asdfg");
             env::set_var("HOSTING", "true");
             env::set_var("WEBHOOK_URL", "https://example.com/hook");
             env::set_var("PORT", "1234");
@@ -116,7 +116,7 @@ mod tests {
         let cfg = AppConfig::from_env().unwrap();
         assert_eq!(cfg.database_url, "postgresql://hello");
         assert_eq!(cfg.token, "tok");
-        assert_eq!(cfg.gemini_api_key, "asd");
+        assert_eq!(cfg.groq_api_key, "asdfg");
         assert!(cfg.hosting);
         assert_eq!(cfg.port, 1234);
         assert_eq!(
@@ -127,7 +127,7 @@ mod tests {
         unsafe {
             env::remove_var("DATABASE_URL");
             env::remove_var("TELOXIDE_TOKEN");
-            env::remove_var("GEMINI_API_KEY");
+            env::remove_var("GROQ_API_KEY");
             env::remove_var("HOSTING");
             env::remove_var("WEBHOOK_URL");
             env::remove_var("PORT");
@@ -147,8 +147,8 @@ mod tests {
 
         unsafe {
             env::set_var("DATABASE_URL", "postgresql://dummy");
-            env::remove_var("TELOXIDE_TOKEN"); // lo que probamos
-            env::set_var("GEMINI_API_KEY", "dummykey");
+            env::remove_var("TELOXIDE_TOKEN");
+            env::set_var("GROQ_API_KEY", "HELLO");
             env::set_var("HOSTING", "false");
         }
 
@@ -160,7 +160,7 @@ mod tests {
 
         unsafe {
             env::remove_var("DATABASE_URL");
-            env::remove_var("GEMINI_API_KEY");
+            env::remove_var("GROQ_API_KEY");
             env::remove_var("HOSTING");
             env::remove_var("DOTENV_DISABLE");
         }

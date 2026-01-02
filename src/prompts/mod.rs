@@ -1,2 +1,2 @@
 mod types;
-pub use types::{GeminiPrompt, Prompt};
+pub use types::{AiPrompt, Prompt};

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH\n        ins_language AS (\n            INSERT INTO languages (name)\n            VALUES ($1)\n            ON CONFLICT DO NOTHING\n            RETURNING id\n        ),\n        language AS (\n            SELECT id FROM ins_language\n            UNION ALL\n            SELECT id\n            FROM languages\n            WHERE name = $1\n              AND deleted_at IS NULL\n            LIMIT 1\n        ),\n        ins_user AS (\n            INSERT INTO users (telegram_id, lang_id)\n            SELECT $2, id FROM language\n            ON CONFLICT DO NOTHING\n        ),\n        ins_chat AS (\n            INSERT INTO chats (telegram_id)\n            VALUES ($3)\n            ON CONFLICT DO NOTHING\n        ),\n        msgs AS (\n            SELECT\n                m.content,\n                m.ia_response\n            FROM messages m\n            WHERE m.user_telegram_id = $2\n              AND m.chat_telegram_id = $3\n              AND m.deleted_at IS NULL\n            ORDER BY m.created_at DESC\n            LIMIT $4\n        )\n        SELECT content, ia_response FROM msgs\n        UNION ALL\n        SELECT NULL, NULL\n        WHERE NOT EXISTS (SELECT 1 FROM msgs)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ia_response",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "0ee3574d739fa43cfa7ba0c82852fcb314d81c83b0a19d8f964012c6f25e5b0b"
+}

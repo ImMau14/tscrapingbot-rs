@@ -9,6 +9,9 @@ pub enum Command {
     #[command(description = "repeat text back to you")]
     Repeat(String),
 
+    #[command(description = "reset the chat history.")]
+    Reset,
+
     #[command(description = "display this text.")]
     Help,
 }

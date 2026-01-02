@@ -1,23 +1,26 @@
 // Prompts Types and Enums
 
-pub struct GeminiPrompt {
+pub struct AiPrompt {
     pub html: String,
     pub thinking: String,
     pub think_and_format: String,
+    pub preprocess: String,
 }
 
 pub enum Prompt {
     Html,
     Thinking,
     ThinkAndFormat,
+    Preprocess,
 }
 
-impl GeminiPrompt {
-    pub fn new() -> GeminiPrompt {
-        GeminiPrompt {
+impl AiPrompt {
+    pub fn new() -> AiPrompt {
+        AiPrompt {
             html: include_str!("./prompts/html.md").to_string(),
-            thinking: include_str!("./prompts/gemini_thinking.md").to_string(),
+            thinking: include_str!("./prompts/thinking.md").to_string(),
             think_and_format: include_str!("./prompts/think_and_format.md").to_string(),
+            preprocess: include_str!("./prompts/preprocess.md").to_string(),
         }
     }
 
@@ -26,11 +29,12 @@ impl GeminiPrompt {
             Prompt::Html => self.html.clone(),
             Prompt::Thinking => self.thinking.clone(),
             Prompt::ThinkAndFormat => self.think_and_format.clone(),
+            Prompt::Preprocess => self.preprocess.clone(),
         }
     }
 }
 
-impl Default for GeminiPrompt {
+impl Default for AiPrompt {
     fn default() -> Self {
         Self::new()
     }

@@ -1,6 +1,5 @@
 pub mod commands;
 pub mod config;
-pub mod gemini;
 pub mod handlers;
 pub mod prompts;
 pub mod server;
@@ -9,9 +8,10 @@ pub mod trace;
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 use config::AppConfig;
-use gemini::Gemini;
+use groqai::GroqClient;
 use handlers::get_update_handler;
-use std::{net::SocketAddr, sync::Arc};
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use std::net::SocketAddr;
 use teloxide::{
     dispatching::Dispatcher,
     error_handlers::LoggingErrorHandler,
@@ -37,11 +37,29 @@ pub async fn run() -> Result<(), BoxError> {
 
     let bot = Bot::new(cfg.token.clone());
 
-    let gemini = Arc::new(Gemini::new(cfg.gemini_api_key));
+    let groq = match GroqClient::with_api_key(cfg.groq_api_key) {
+        Ok(client) => client,
+        Err(e) => {
+            error!("The Groq client could not be started");
+            return Err(Box::new(e) as BoxError);
+        }
+    };
+
+    let pool: PgPool = match PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&cfg.database_url)
+        .await
+    {
+        Ok(pool) => pool,
+        Err(e) => {
+            error!("The database could not be connected");
+            return Err(Box::new(e) as BoxError);
+        }
+    };
 
     let handler = get_update_handler();
     let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .dependencies(dptree::deps![gemini.clone()])
+        .dependencies(dptree::deps![pool.clone(), groq.clone()])
         .enable_ctrlc_handler()
         .build();
 
