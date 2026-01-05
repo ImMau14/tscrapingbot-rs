@@ -5,6 +5,7 @@ use crate::{
         types::MessageRow,
         utils::{
             ChatActionKeepAlive, analyze_image, escape_telegram_code_entities, format_messages_xml,
+            message_has_photo,
         },
     },
     prompts::{AiPrompt, Prompt},
@@ -51,7 +52,7 @@ pub async fn ask(
     let user_id: i64 = user.id.0 as i64;
     let user_lang: &str = user.language_code.as_deref().unwrap_or("en");
     let msg_chat_id: i64 = thread_id.map(|tid| tid.0.0 as i64).unwrap_or(chat_id.0);
-    let history_limit: i64 = 30;
+    let history_limit: i32 = 30;
 
     // Start database transaction.
     let mut tx = match pool.begin().await {
@@ -68,50 +69,7 @@ pub async fn ask(
     // Load recent message history, creating language/user/chat records if needed.
     let messages: Vec<MessageRow> = match sqlx::query_as!(
         MessageRow,
-        r#"
-        WITH
-        ins_language AS (
-            INSERT INTO languages (name)
-            VALUES ($1)
-            ON CONFLICT DO NOTHING
-            RETURNING id
-        ),
-        language AS (
-            SELECT id FROM ins_language
-            UNION ALL
-            SELECT id
-            FROM languages
-            WHERE name = $1
-              AND deleted_at IS NULL
-            LIMIT 1
-        ),
-        ins_user AS (
-            INSERT INTO users (telegram_id, lang_id)
-            SELECT $2, id FROM language
-            ON CONFLICT DO NOTHING
-        ),
-        ins_chat AS (
-            INSERT INTO chats (telegram_id)
-            VALUES ($3)
-            ON CONFLICT DO NOTHING
-        ),
-        msgs AS (
-            SELECT
-                m.content,
-                m.ia_response
-            FROM messages m
-            WHERE m.user_telegram_id = $2
-              AND m.chat_telegram_id = $3
-              AND m.deleted_at IS NULL
-              AND m.is_cleared = FALSE
-            ORDER BY m.created_at DESC
-            LIMIT $4
-        )
-        SELECT content, ia_response FROM msgs
-        UNION ALL
-        SELECT NULL, NULL
-        WHERE NOT EXISTS (SELECT 1 FROM msgs)
-        "#,
+        "SELECT content, ia_response FROM get_recent_messages($1, $2, $3, $4)",
         user_lang,
         user_id,
         msg_chat_id,
@@ -138,7 +96,18 @@ pub async fn ask(
     // ---------------------------
 
     // Analyze attached image and return a ready-to-insert analysis section.
-    let image_section = analyze_image(&bot, &msg, &text, &groq).await;
+    let image_section = if message_has_photo(&msg) {
+        analyze_image(
+            &bot,
+            &msg,
+            &format!("{text}\n\nHistory:\n\n{history}"),
+            &groq,
+        )
+        .await
+    } else {
+        // No image attached -> empty image section
+        String::new()
+    };
 
     // Build base prompt including user text, image analysis, and history.
     let base_prompt = format!("{text}\n\n{image_section}History:\n\n{history}");

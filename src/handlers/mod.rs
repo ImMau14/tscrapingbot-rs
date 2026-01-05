@@ -67,10 +67,10 @@ impl Executor {
         // Cleanup user lock if no other references exist.
         if Arc::strong_count(&lock_arc) == 1 {
             let mut map = self.user_locks.lock().await;
-            if let Some(existing) = map.get(&user_key) {
-                if Arc::ptr_eq(existing, &lock_arc) {
-                    map.remove(&user_key);
-                }
+            if let Some(existing) = map.get(&user_key)
+                && Arc::ptr_eq(existing, &lock_arc)
+            {
+                map.remove(&user_key);
             }
         }
 

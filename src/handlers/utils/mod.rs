@@ -8,4 +8,4 @@ pub mod format_messages_xml;
 pub use format_messages_xml::format_messages_xml;
 
 pub mod image;
-pub use image::analyze_image;
+pub use image::{analyze_image, message_has_photo};

@@ -150,6 +150,13 @@ fn largest_photo_file_id(msg: &Message) -> Option<FileId> {
     None
 }
 
+// Public helper: quickly check whether a message contains a photo.
+// Use this to avoid calling analyze_image when there's no image at all.
+pub fn message_has_photo(msg: &Message) -> bool {
+    // Re-use the same pattern-match logic: return true if largest_photo_file_id yields Some.
+    largest_photo_file_id(msg).is_some()
+}
+
 // Retrieves the remote Telegram file path for a given FileId.
 async fn get_telegram_file_path(bot: &Bot, file_id: FileId) -> Option<String> {
     match bot.get_file(file_id).send().await {
