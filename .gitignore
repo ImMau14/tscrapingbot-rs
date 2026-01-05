@@ -1,2 +1,5 @@
 /target
 .env
+
+.sqlx/**
+!/.sqlx/*.json
