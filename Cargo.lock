@@ -3849,6 +3849,7 @@ dependencies = [
  "base64",
  "dotenvy",
  "groqai",
+ "once_cell",
  "regex",
  "reqwest",
  "serde",
