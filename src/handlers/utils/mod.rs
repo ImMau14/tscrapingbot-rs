@@ -7,5 +7,7 @@ pub use escape_telegram_code_entities::escape_telegram_code_entities;
 pub mod format_messages_xml;
 pub use format_messages_xml::format_messages_xml;
 
-pub mod image;
-pub use image::{analyze_image, message_has_photo};
+pub mod extract_user_info;
+pub use extract_user_info::extract_user_info;
+
+pub mod llm;
