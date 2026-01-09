@@ -11,3 +11,6 @@ pub mod extract_user_info;
 pub use extract_user_info::extract_user_info;
 
 pub mod llm;
+
+pub mod fetch_simplified_body;
+pub use fetch_simplified_body::fetch_simplified_body;

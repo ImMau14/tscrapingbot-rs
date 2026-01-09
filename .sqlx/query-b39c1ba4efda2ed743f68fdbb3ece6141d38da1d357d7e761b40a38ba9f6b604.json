@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE messages\n        SET is_cleared = TRUE\n        WHERE user_telegram_id = $1\n          AND chat_telegram_id = $2\n          AND deleted_at IS NULL\n          AND is_cleared = FALSE\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b39c1ba4efda2ed743f68fdbb3ece6141d38da1d357d7e761b40a38ba9f6b604"
+}

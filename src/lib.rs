@@ -37,7 +37,7 @@ pub async fn run() -> Result<(), BoxError> {
 
     let bot = Bot::new(cfg.token.clone());
 
-    let groq = match GroqClient::with_api_key(cfg.groq_api_key) {
+    let groq = match GroqClient::with_api_key(cfg.clone().groq_api_key) {
         Ok(client) => client,
         Err(e) => {
             error!("The Groq client could not be started");
@@ -59,7 +59,7 @@ pub async fn run() -> Result<(), BoxError> {
 
     let handler = get_update_handler();
     let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .dependencies(dptree::deps![pool.clone(), groq.clone()])
+        .dependencies(dptree::deps![pool.clone(), groq.clone(), cfg.clone()])
         .enable_ctrlc_handler()
         .build();
 

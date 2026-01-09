@@ -6,10 +6,13 @@ use ask::ask;
 mod reset;
 use reset::reset;
 
+mod search;
+use search::search;
+
 pub mod types;
 pub mod utils;
 
-use crate::commands::Command;
+use crate::{commands::Command, config::AppConfig};
 use groqai::GroqClient;
 use once_cell::sync::Lazy;
 use sqlx::postgres::PgPool;
@@ -97,6 +100,7 @@ pub async fn handle_command(
     cmd: Command,
     pool: PgPool,
     groq: GroqClient,
+    app_config: AppConfig,
 ) -> ResponseResult<()> {
     // Validate message author.
     let user = match msg.from.as_ref() {
@@ -145,6 +149,20 @@ pub async fn handle_command(
                             tracing::error!("Reset command failed: {:?}", e);
                         }
                     }
+                    Command::Search(text) => {
+                        if let Err(e) = search(
+                            bot,
+                            msg,
+                            text,
+                            app_config.scrapedo_token.clone(),
+                            pool,
+                            groq,
+                        )
+                        .await
+                        {
+                            tracing::error!("Search command failed: {:?}", e);
+                        }
+                    }
                     Command::Help => {
                         if let Err(e) = bot
                             .send_message(msg.chat.id, Command::descriptions().to_string())
@@ -167,6 +185,7 @@ async fn handle_private_plain_text(
     msg: Message,
     pool: PgPool,
     groq: GroqClient,
+    app_config: AppConfig,
 ) -> ResponseResult<()> {
     // Prefer real text() (normal messages), fall back to caption() (media captions), else empty.
     let text = if let Some(t) = msg.text() {
@@ -183,7 +202,7 @@ async fn handle_private_plain_text(
     }
 
     // Route to same command handler so concurrency/SQL logic remains unchanged.
-    handle_command(bot, msg, Command::Ask(text), pool, groq).await
+    handle_command(bot, msg, Command::Ask(text), pool, groq, app_config).await
 }
 
 // Build the update handler tree.
