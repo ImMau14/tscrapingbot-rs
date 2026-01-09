@@ -15,6 +15,7 @@ pub enum ConfigError {
 #[derive(Clone)]
 pub struct AppConfig {
     pub database_url: String,
+    pub scrapedo_token: String,
     pub token: String,
     pub groq_api_key: String,
     pub hosting: bool,
@@ -27,6 +28,7 @@ impl std::fmt::Debug for AppConfig {
         f.debug_struct("AppConfig")
             .field("database_url", &"<redacted>")
             .field("token", &"<redacted>")
+            .field("scrapedo_token", &"<redacted>")
             .field("groq_api_key", &"<redacted>")
             .field("hosting", &self.hosting)
             .field("webhook_url", &self.webhook_url)
@@ -54,6 +56,9 @@ impl AppConfig {
 
         let token =
             env::var("TELOXIDE_TOKEN").map_err(|_| ConfigError::MissingEnv("TELOXIDE_TOKEN"))?;
+
+        let scrapedo_token =
+            env::var("SCRAPEDO_TOKEN").map_err(|_| ConfigError::MissingEnv("SCRAPEDO_TOKEN"))?;
 
         let groq_api_key =
             env::var("GROQ_API_KEY").map_err(|_| ConfigError::MissingEnv("GROQ_API_KEY"))?;
@@ -83,6 +88,7 @@ impl AppConfig {
         Ok(Self {
             database_url,
             token,
+            scrapedo_token,
             groq_api_key,
             hosting,
             webhook_url,
@@ -107,6 +113,7 @@ mod tests {
         unsafe {
             env::set_var("DATABASE_URL", "postgresql://hello");
             env::set_var("TELOXIDE_TOKEN", "tok");
+            env::set_var("SCRAPEDO_TOKEN", "scrape123");
             env::set_var("GROQ_API_KEY", "asdfg");
             env::set_var("HOSTING", "true");
             env::set_var("WEBHOOK_URL", "https://example.com/hook");
@@ -116,6 +123,7 @@ mod tests {
         let cfg = AppConfig::from_env().unwrap();
         assert_eq!(cfg.database_url, "postgresql://hello");
         assert_eq!(cfg.token, "tok");
+        assert_eq!(cfg.scrapedo_token, "scrape123");
         assert_eq!(cfg.groq_api_key, "asdfg");
         assert!(cfg.hosting);
         assert_eq!(cfg.port, 1234);
@@ -127,6 +135,7 @@ mod tests {
         unsafe {
             env::remove_var("DATABASE_URL");
             env::remove_var("TELOXIDE_TOKEN");
+            env::remove_var("SCRAPEDO_TOKEN");
             env::remove_var("GROQ_API_KEY");
             env::remove_var("HOSTING");
             env::remove_var("WEBHOOK_URL");
@@ -148,6 +157,7 @@ mod tests {
         unsafe {
             env::set_var("DATABASE_URL", "postgresql://dummy");
             env::remove_var("TELOXIDE_TOKEN");
+            env::set_var("SCRAPEDO_TOKEN", "scrape123");
             env::set_var("GROQ_API_KEY", "HELLO");
             env::set_var("HOSTING", "false");
         }
@@ -162,6 +172,7 @@ mod tests {
             env::remove_var("DATABASE_URL");
             env::remove_var("GROQ_API_KEY");
             env::remove_var("HOSTING");
+            env::remove_var("SCRAPEDO_TOKEN");
             env::remove_var("DOTENV_DISABLE");
         }
     }
