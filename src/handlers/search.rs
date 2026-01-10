@@ -7,6 +7,7 @@ use crate::{
             ChatActionKeepAlive, escape_telegram_code_entities, extract_user_info,
             fetch_simplified_body, format_messages_xml,
             llm::{run_main_model, run_reasoning_step},
+            send_reply_or_plain,
         },
     },
     prompts::AiPrompt,
@@ -15,7 +16,7 @@ use groqai::GroqClient;
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
-    types::{ChatAction, ParseMode, ThreadId},
+    types::{ChatAction, ThreadId},
 };
 use tracing::error;
 
@@ -34,6 +35,19 @@ pub async fn search(
     let mut keep =
         ChatActionKeepAlive::spawn(bot.clone(), chat_id, thread_id, ChatAction::Typing, 4);
 
+    if text.trim().is_empty() {
+        keep.shutdown().await;
+        send_reply_or_plain(
+            &bot,
+            &msg,
+            "I can't reply to an empty message.",
+            false,
+            false,
+        )
+        .await?;
+        return Ok(());
+    }
+
     // Prompt helper to access predefined system prompts.
     let prompts = AiPrompt::new();
 
@@ -41,9 +55,9 @@ pub async fn search(
     let (user_id, user_lang, msg_chat_id) = match extract_user_info(&msg) {
         Ok(v) => v,
         Err(err_msg) => {
-            // User-facing error, stop typing indicator, return.
+            // User-facing error, stop typing indicator, return
             keep.shutdown().await;
-            bot.send_message(chat_id, err_msg).await?;
+            send_reply_or_plain(&bot, &msg, err_msg, false, false).await?;
             return Ok(());
         }
     };
@@ -52,12 +66,9 @@ pub async fn search(
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            // Log error without dropping the exception.
-            let err_text = e.to_string();
-            error!("DB transaction error: {}", err_text);
+            error!("DB transaction error: {e}");
             keep.shutdown().await;
-            bot.send_message(chat_id, "Internal database error.")
-                .await?;
+            send_reply_or_plain(&bot, &msg, "Internal database error.", false, false).await?;
             return Ok(());
         }
     };
@@ -77,12 +88,10 @@ pub async fn search(
     {
         Ok(rows) => rows,
         Err(e) => {
-            // Log error without dropping the exception.
-            let err_text = e.to_string();
-            error!("Query failed: {}", err_text);
+            error!("Query failed: {e}.");
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, "Database error.").await?;
+            send_reply_or_plain(&bot, &msg, "Database error", false, false).await?;
             return Ok(());
         }
     };
@@ -96,8 +105,14 @@ pub async fn search(
                 error!("Search failed: Not URL to search");
                 let _ = tx.rollback().await;
                 keep.shutdown().await;
-                bot.send_message(chat_id, "Use a valid URL (http:// or https://)")
-                    .await?;
+                send_reply_or_plain(
+                    &bot,
+                    &msg,
+                    "Use a valid URL (http:// or https://).",
+                    false,
+                    false,
+                )
+                .await?;
                 return Ok(());
             }
 
@@ -109,8 +124,14 @@ pub async fn search(
             error!("Search failed: Not URL to search");
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, "Use a valid URL (http:// or https://)")
-                .await?;
+            send_reply_or_plain(
+                &bot,
+                &msg,
+                "Use a valid URL (http:// or https://).",
+                false,
+                false,
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -123,7 +144,7 @@ pub async fn search(
             error!("Search failed: {}", err_text);
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, "Search error.").await?;
+            send_reply_or_plain(&bot, &msg, "Search error.", false, false).await?;
             return Ok(());
         }
     };
@@ -137,11 +158,10 @@ pub async fn search(
     let refined = match run_reasoning_step(&groq, &prompts, &base_prompt, reasoning_model).await {
         Some(v) => v,
         None => {
-            // Fatal preprocessing error: rollback and notify.
+            // Fatal preprocessing error: rollback and notify
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, "Error during preprocessing.")
-                .await?;
+            send_reply_or_plain(&bot, &msg, "Error during preprocessing.", false, false).await?;
             return Ok(());
         }
     };
@@ -161,9 +181,8 @@ pub async fn search(
             // Model error: rollback and notify.
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            error!("Search failed: {}", err_text);
-            bot.send_message(chat_id, "Internal main model error")
-                .await?;
+            error!("Search failed: {}.", err_text);
+            send_reply_or_plain(&bot, &msg, "Internal main model error.", false, false).await?;
             return Ok(());
         }
     };
@@ -175,14 +194,7 @@ pub async fn search(
     keep.shutdown().await;
 
     // Build send request (no await yet)
-    let send_req = if let Some(tid) = thread_id {
-        bot.send_message(chat_id, final_answer.clone())
-            .message_thread_id(tid)
-            .parse_mode(ParseMode::Html)
-    } else {
-        bot.send_message(chat_id, final_answer.clone())
-            .parse_mode(ParseMode::Html)
-    };
+    let send_req = send_reply_or_plain(&bot, &msg, final_answer.clone(), false, true);
 
     // Send message (await). Any error must be materialized & logged before later awaits.
     if let Err(e) = send_req.await {
@@ -211,22 +223,23 @@ pub async fn search(
     .execute(&mut *tx)
     .await
     {
-        // Log error without dropping the exception.
-        let err_text = e.to_string();
-        error!("Insert failed: {}", err_text);
+        error!("Insert failed: {e}");
         let _ = tx.rollback().await;
-        bot.send_message(chat_id, "Database error (couldn't save message).")
-            .await?;
+        send_reply_or_plain(
+            &bot,
+            &msg,
+            "Database error (couldn't save message).",
+            false,
+            false,
+        )
+        .await?;
         return Ok(());
     }
 
-    // Commit; log and notify user on failure.
-    // Finalize the transaction.
+    // Commit; log and notify user on failure
     if let Err(e) = tx.commit().await {
-        // Log error without dropping the exception.
-        let err_text = e.to_string();
-        error!("Commit failed: {}", err_text);
-        bot.send_message(chat_id, "Error saving data.").await?;
+        error!("Commit failed: {e}");
+        send_reply_or_plain(&bot, &msg, "Error saving data.", false, false).await?;
     }
 
     Ok(())

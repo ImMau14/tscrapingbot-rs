@@ -7,6 +7,7 @@ use crate::{
             ChatActionKeepAlive, escape_telegram_code_entities, extract_user_info,
             format_messages_xml,
             llm::{analyze_image, message_has_photo, run_main_model, run_reasoning_step},
+            send_reply_or_plain,
         },
     },
     prompts::AiPrompt,
@@ -15,7 +16,7 @@ use groqai::GroqClient;
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
-    types::{ChatAction, ParseMode, ThreadId},
+    types::{ChatAction, ThreadId},
 };
 use tracing::error;
 
@@ -34,6 +35,19 @@ pub async fn ask(
     let mut keep =
         ChatActionKeepAlive::spawn(bot.clone(), chat_id, thread_id, ChatAction::Typing, 4);
 
+    if text.trim().is_empty() {
+        keep.shutdown().await;
+        send_reply_or_plain(
+            &bot,
+            &msg,
+            "I can't reply to an empty message.",
+            false,
+            false,
+        )
+        .await?;
+        return Ok(());
+    }
+
     // Prompt helper to access predefined system prompts.
     let prompts = AiPrompt::new();
 
@@ -42,7 +56,7 @@ pub async fn ask(
         Err(err_msg) => {
             // User-facing error, stop typing indicator, return
             keep.shutdown().await;
-            bot.send_message(chat_id, err_msg).await?;
+            send_reply_or_plain(&bot, &msg, err_msg, false, false).await?;
             return Ok(());
         }
     };
@@ -53,8 +67,7 @@ pub async fn ask(
         Err(e) => {
             error!("DB transaction error: {e}");
             keep.shutdown().await;
-            bot.send_message(chat_id, "Internal database error.")
-                .await?;
+            send_reply_or_plain(&bot, &msg, "Internal database error.", false, false).await?;
             return Ok(());
         }
     };
@@ -77,7 +90,7 @@ pub async fn ask(
             error!("Query failed: {e}");
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, "Database error.").await?;
+            send_reply_or_plain(&bot, &msg, "Database error.", false, false).await?;
             return Ok(());
         }
     };
@@ -106,8 +119,7 @@ pub async fn ask(
             // Fatal preprocessing error: rollback and notify
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, "Error during preprocessing.")
-                .await?;
+            send_reply_or_plain(&bot, &msg, "Error during preprocessing.", false, false).await?;
             return Ok(());
         }
     };
@@ -123,7 +135,7 @@ pub async fn ask(
             // Model error: rollback and notify
             let _ = tx.rollback().await;
             keep.shutdown().await;
-            bot.send_message(chat_id, format!("Error: {e}")).await?;
+            send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
             return Ok(());
         }
     };
@@ -133,14 +145,7 @@ pub async fn ask(
 
     keep.shutdown().await;
 
-    let send_req = if let Some(tid) = thread_id {
-        bot.send_message(chat_id, final_answer.clone())
-            .message_thread_id(tid)
-            .parse_mode(ParseMode::Html)
-    } else {
-        bot.send_message(chat_id, final_answer.clone())
-            .parse_mode(ParseMode::Html)
-    };
+    let send_req = send_reply_or_plain(&bot, &msg, final_answer.clone(), false, true);
 
     if let Err(e) = send_req.await {
         error!("Telegram send failed: {e} — rolling back DB transaction.");
@@ -163,15 +168,21 @@ pub async fn ask(
     {
         error!("Insert failed: {e}");
         let _ = tx.rollback().await;
-        bot.send_message(chat_id, "Database error (couldn't save message).")
-            .await?;
+        send_reply_or_plain(
+            &bot,
+            &msg,
+            "Database error (couldn't save message).",
+            false,
+            false,
+        )
+        .await?;
         return Ok(());
     }
 
     // Commit; log and notify user on failure
     if let Err(e) = tx.commit().await {
         error!("Commit failed: {e}");
-        bot.send_message(chat_id, "Error saving data.").await?;
+        send_reply_or_plain(&bot, &msg, "Error saving data.", false, false).await?;
     }
 
     Ok(())
