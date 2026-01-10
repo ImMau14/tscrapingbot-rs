@@ -12,6 +12,9 @@ pub enum Command {
     #[command(description = "reset the chat history.")]
     Reset,
 
+    #[command(description = "the start command.")]
+    Start,
+
     #[command(description = "respond using AI and your web resource")]
     Search(String),
 
