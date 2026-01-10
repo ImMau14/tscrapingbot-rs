@@ -25,6 +25,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: false
 
+    env:
+      SQLX_OFFLINE: ${{ secrets.SQLX_OFFLINE }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

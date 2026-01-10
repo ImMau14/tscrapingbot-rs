@@ -11,12 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    uses: ./.github/workflows/common-rust-steps.yaml
-    with:
-      command: build
-    secrets: inherit
-
   test:
     uses: ./.github/workflows/common-rust-steps.yaml
     with:
@@ -38,7 +32,7 @@ jobs:
   deploy:
     name: Deploy to Render (deploy hook)
     runs-on: ubuntu-latest
-    needs: [build, test, clippy, formatting]
+    needs: [test, clippy, formatting]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
     steps:

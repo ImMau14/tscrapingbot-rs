@@ -10,8 +10,8 @@ on:
     secrets:
       GROQ_API_KEY:
         required: false
-      DATABASE_URL:
-        required: false
+      SQLX_OFFLINE:
+        required: true
 
 jobs:
   run:
@@ -19,21 +19,7 @@ jobs:
 
     env:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+      SQLX_OFFLINE: ${{ secrets.SQLX_OFFLINE }}
 
     steps:
       - name: Checkout repository
@@ -52,32 +38,6 @@ jobs:
             echo "ERROR: GROQ_API_KEY is required for tests"
             exit 1
           fi
-
-      - name: Configure DATABASE_URL
-        shell: bash
-        run: |
-          if [ -n "${{ secrets.DATABASE_URL }}" ]; then
-            echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> "$GITHUB_ENV"
-            echo "Using DATABASE_URL from secrets"
-          else
-            echo "DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres" >> "$GITHUB_ENV"
-            echo "Using local PostgreSQL service as fallback"
-          fi
-
-      - name: Wait for PostgreSQL
-        shell: bash
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y postgresql-client
-          for i in $(seq 1 30); do
-            if pg_isready -h 127.0.0.1 -p 5432 -U postgres > /dev/null 2>&1; then
-              echo "PostgreSQL is ready"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "ERROR: PostgreSQL did not become ready"
-          exit 1
 
       - name: Run cargo command
         shell: bash
