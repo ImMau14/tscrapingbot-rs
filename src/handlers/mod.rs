@@ -9,6 +9,9 @@ use reset::reset;
 mod search;
 use search::search;
 
+mod start;
+use start::start;
+
 pub mod types;
 pub mod utils;
 
@@ -147,6 +150,11 @@ pub async fn handle_command(
                     Command::Reset => {
                         if let Err(e) = reset(bot, msg, pool).await {
                             tracing::error!("Reset command failed: {:?}", e);
+                        }
+                    }
+                    Command::Start => {
+                        if let Err(e) = start(bot, msg).await {
+                            tracing::error!("Start command failed: {:?}", e);
                         }
                     }
                     Command::Search(text) => {
