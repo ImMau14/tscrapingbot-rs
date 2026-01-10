@@ -16,6 +16,8 @@ My Telegram bot that analyzes web pages with AI, but now written in Rust. Use it
 - [Code Quality](#code-quality)
 - [Downloads](#downloads)
 - [Why the bot changed](#why-the-bot-changed)
+- [Contributing](#contributing)
+- [Code of Conduct](#code-of-conduct)
 - [License](#license)
 
 ---
@@ -115,6 +117,18 @@ I decided to implement this change abruptly in order to optimize the bot’s ove
 I switched from using Gemini to Groq models because, as of the date I’m writing this, the free limit for Gemini calls has been reduced to 20 calls per day.
 
 The original bot repository still exists and will remain that way, as it might still be useful to someone: [ImMau14/TScrapingbot](https://github.com/ImMau14/TScrapingBot).
+
+---
+
+## Contributing
+
+Please refer to the [CONTRIBUTING.md](CONTRIBUTING.md) file for guidelines on how to report issues, submit pull requests, and get started with development.
+
+---
+
+## Code of Conduct
+
+By participating in this project, you agree to abide by the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 
 ---
 
