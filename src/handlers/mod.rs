@@ -12,6 +12,9 @@ use search::search;
 mod start;
 use start::start;
 
+mod dollar;
+use dollar::dollar;
+
 pub mod types;
 pub mod utils;
 
@@ -155,6 +158,11 @@ pub async fn handle_command(
                     Command::Start => {
                         if let Err(e) = start(bot, msg).await {
                             tracing::error!("Start command failed: {:?}", e);
+                        }
+                    }
+                    Command::Dollar => {
+                        if let Err(e) = dollar(bot, msg).await {
+                            tracing::error!("Dollar command failed: {:?}", e);
                         }
                     }
                     Command::Search(text) => {
