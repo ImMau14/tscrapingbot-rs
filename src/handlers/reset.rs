@@ -1,6 +1,6 @@
 // Handler for the /reset command.
 
-use crate::handlers::utils::ChatActionKeepAlive;
+use crate::handlers::utils::{ChatActionKeepAlive, send_reply_or_plain};
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
@@ -16,10 +16,16 @@ pub async fn reset(bot: Bot, msg: Message, pool: PgPool) -> Result<(), teloxide:
         ChatActionKeepAlive::spawn(bot.clone(), chat_id, thread_id, ChatAction::Typing, 4);
 
     let user = match msg.from {
-        Some(u) => u,
+        Some(ref u) => u,
         None => {
-            bot.send_message(chat_id, "The user could not be identified.")
-                .await?;
+            send_reply_or_plain(
+                &bot,
+                &msg,
+                "The user could not be identified.",
+                false,
+                false,
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -44,41 +50,23 @@ pub async fn reset(bot: Bot, msg: Message, pool: PgPool) -> Result<(), teloxide:
     {
         Ok(res) => {
             let affected = res.rows_affected();
+            keep.shutdown().await;
+
             if affected > 0 {
                 let text = "Chat reset successfully.";
-                keep.shutdown().await;
-
-                if let Some(tid) = thread_id {
-                    bot.send_message(chat_id, text)
-                        .message_thread_id(tid)
-                        .await?;
-                } else {
-                    bot.send_message(chat_id, text).await?;
-                }
+                send_reply_or_plain(&bot, &msg, text, false, false).await?;
             } else {
                 let text = "The chat has already been reset.";
-                if let Some(tid) = thread_id {
-                    bot.send_message(chat_id, text)
-                        .message_thread_id(tid)
-                        .await?;
-                } else {
-                    bot.send_message(chat_id, text).await?;
-                }
+                send_reply_or_plain(&bot, &msg, text, false, false).await?;
             }
             Ok(())
         }
         Err(e) => {
             error!("Failed to reset messages: {e}");
-            let err_text = "Error clearing messages.";
+            let err_text = "Internal database error while clearing messages.";
             keep.shutdown().await;
 
-            if let Some(tid) = thread_id {
-                bot.send_message(chat_id, err_text)
-                    .message_thread_id(tid)
-                    .await?;
-            } else {
-                bot.send_message(chat_id, err_text).await?;
-            }
+            send_reply_or_plain(&bot, &msg, err_text, false, false).await?;
             Ok(())
         }
     }
