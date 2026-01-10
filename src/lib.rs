@@ -11,7 +11,7 @@ use config::AppConfig;
 use groqai::GroqClient;
 use handlers::get_update_handler;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 use teloxide::{
     dispatching::Dispatcher,
     error_handlers::LoggingErrorHandler,
@@ -46,7 +46,12 @@ pub async fn run() -> Result<(), BoxError> {
     };
 
     let pool: PgPool = match PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(10)
+        .min_connections(2)
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Some(Duration::from_secs(60)))
+        .max_lifetime(Some(Duration::from_secs(60 * 30)))
+        .test_before_acquire(true)
         .connect(&cfg.database_url)
         .await
     {
