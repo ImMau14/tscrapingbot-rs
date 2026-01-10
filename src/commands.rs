@@ -15,6 +15,9 @@ pub enum Command {
     #[command(description = "the start command.")]
     Start,
 
+    #[command(description = "get the dollar price at the BCV.")]
+    Dollar,
+
     #[command(description = "respond using AI and your web resource")]
     Search(String),
 
