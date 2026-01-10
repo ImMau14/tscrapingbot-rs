@@ -3,6 +3,7 @@
 use crate::handlers::utils::{ChatActionKeepAlive, send_reply_or_plain};
 use kuchiki::traits::*;
 use reqwest;
+use std::time::Duration;
 use teloxide::{
     prelude::*,
     types::{ChatAction, ThreadId},
@@ -18,17 +19,29 @@ pub async fn dollar(bot: Bot, msg: Message) -> Result<(), teloxide::RequestError
     let mut keep =
         ChatActionKeepAlive::spawn(bot.clone(), chat_id, thread_id, ChatAction::Typing, 4);
 
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            keep.shutdown().await;
+            error!("Failed to build reqwest client: {e}");
+            return Ok(());
+        }
+    };
+
     // Fetch BCV homepage.
-    let res = match reqwest::get("https://www.bcv.org.ve").await {
+    let res = match client.get("https://www.bcv.org.ve").send().await {
         Ok(val) => val,
         Err(e) => {
-            // Handle request failure.
             keep.shutdown().await;
             error!("Could not retrieve the dollar page: {:?}", e);
             send_reply_or_plain(
                 &bot,
                 &msg,
-                "Could not retrieve the dollar page.",
+                "Could not retrieve the dollar page (Connection Error).",
                 false,
                 false,
             )
@@ -94,7 +107,8 @@ pub async fn dollar(bot: Bot, msg: Message) -> Result<(), teloxide::RequestError
         }
         None => {
             keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Failed to get dollar value.", false, false).await?;
+            send_reply_or_plain(&bot, &msg, "Failed to get BCV dollar value.", false, false)
+                .await?;
             Ok(())
         }
     }
