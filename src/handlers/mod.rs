@@ -141,7 +141,9 @@ pub async fn handle_command(
             async move {
                 match cmd {
                     Command::Ask(text) => {
-                        if let Err(e) = ask(bot, msg, text, pool, groq).await {
+                        if let Err(e) =
+                            ask(bot, msg, text, pool, groq, app_config.models.clone()).await
+                        {
                             tracing::error!("Ask command failed: {:?}", e);
                         }
                     }
@@ -173,6 +175,7 @@ pub async fn handle_command(
                             app_config.scrapedo_token.clone(),
                             pool,
                             groq,
+                            app_config.models.clone(),
                         )
                         .await
                         {

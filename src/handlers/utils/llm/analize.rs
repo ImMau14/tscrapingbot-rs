@@ -1,20 +1,19 @@
 // Keep these small and testable: other handlers can call them directly.
 
-use crate::prompts::{AiPrompt, Prompt};
 use groqai::{ChatMessage, GroqClient, MessageContent, Role};
 use tracing::error;
 
 // Run the "reasoning" / preprocessing model with a minimal retry strategy.
 pub async fn run_reasoning_step(
     groq: &GroqClient,
-    prompts: &AiPrompt,
     base_prompt: &str,
     reasoning_model: &str,
+    system_prompt: String,
 ) -> Option<String> {
     // Build a simple conversation for the reasoning model
     let reasoning_user = format!("Full prompt+history:\n\n{base_prompt}");
     let messages = vec![
-        ChatMessage::new_text(Role::System, prompts.get(Prompt::Preprocess)),
+        ChatMessage::new_text(Role::System, system_prompt),
         ChatMessage::new_text(Role::User, reasoning_user),
     ];
 
@@ -53,12 +52,12 @@ pub async fn run_reasoning_step(
 // Call the main generation model and return raw text (no Telegram escaping).
 pub async fn run_main_model(
     groq: &GroqClient,
-    prompts: &AiPrompt,
     prompt_for_main: &str,
     main_model: &str,
+    system_prompt: String,
 ) -> Result<String, String> {
     let messages = vec![
-        ChatMessage::new_text(Role::System, prompts.get(Prompt::ThinkAndFormat)),
+        ChatMessage::new_text(Role::System, system_prompt),
         ChatMessage::new_text(Role::User, prompt_for_main.to_string()),
     ];
 

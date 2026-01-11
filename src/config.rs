@@ -13,6 +13,13 @@ pub enum ConfigError {
 }
 
 #[derive(Clone)]
+pub struct Models {
+    pub vision: String,
+    pub preprocessing: String,
+    pub thinking: String,
+}
+
+#[derive(Clone)]
 pub struct AppConfig {
     pub database_url: String,
     pub scrapedo_token: String,
@@ -21,6 +28,7 @@ pub struct AppConfig {
     pub hosting: bool,
     pub webhook_url: Option<url::Url>,
     pub port: u16,
+    pub models: Models,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -85,6 +93,14 @@ impl AppConfig {
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(8080);
 
+        // Fix: read model env vars with defaults
+        let vision = env::var("VISION_MODEL")
+            .unwrap_or_else(|_| "meta-llama/llama-4-scout-17b-16e-instruct".to_string());
+        let preprocessing =
+            env::var("PREPROCESSING_MODEL").unwrap_or_else(|_| "openai/gpt-oss-20b".to_string());
+        let thinking =
+            env::var("THINKING_MODEL").unwrap_or_else(|_| "openai/gpt-oss-120b".to_string());
+
         Ok(Self {
             database_url,
             token,
@@ -93,6 +109,11 @@ impl AppConfig {
             hosting,
             webhook_url,
             port,
+            models: Models {
+                vision,
+                preprocessing,
+                thinking,
+            },
         })
     }
 }
@@ -118,6 +139,7 @@ mod tests {
             env::set_var("HOSTING", "true");
             env::set_var("WEBHOOK_URL", "https://example.com/hook");
             env::set_var("PORT", "1234");
+            // optional model vars not set, defaults will be used
         }
 
         let cfg = AppConfig::from_env().unwrap();
@@ -131,6 +153,13 @@ mod tests {
             cfg.webhook_url.unwrap().as_str(),
             "https://example.com/hook"
         );
+        // Verify defaults
+        assert_eq!(
+            cfg.models.vision,
+            "meta-llama/llama-4-scout-17b-16e-instruct"
+        );
+        assert_eq!(cfg.models.preprocessing, "openai/gpt-oss-20b");
+        assert_eq!(cfg.models.thinking, "openai/gpt-oss-120b");
 
         unsafe {
             env::remove_var("DATABASE_URL");

@@ -1,6 +1,7 @@
 // Handler for the search command
 
 use crate::{
+    config::Models,
     handlers::{
         types::MessageRow,
         utils::{
@@ -10,7 +11,7 @@ use crate::{
             send_reply_or_plain,
         },
     },
-    prompts::AiPrompt,
+    prompts::{AiPrompt, Prompt},
 };
 use groqai::GroqClient;
 use sqlx::PgPool;
@@ -27,6 +28,7 @@ pub async fn search(
     scrapedo_token: String,
     pool: PgPool,
     groq: GroqClient,
+    models: Models,
 ) -> Result<(), teloxide::RequestError> {
     let chat_id = msg.chat.id;
     let thread_id: Option<ThreadId> = msg.thread_id;
@@ -151,11 +153,18 @@ pub async fn search(
 
     // Prepare the base prompt for the reasoning step.
     let base_prompt = format!("{text}\n\nWebResource:\n{web_resource}History:\n\n{history}");
-    let reasoning_model = "openai/gpt-oss-20b";
-    let main_model = "openai/gpt-oss-120b";
+    let reasoning_model = &models.clone().preprocessing;
+    let main_model = &models.thinking;
 
     // Run the reasoning model.
-    let refined = match run_reasoning_step(&groq, &prompts, &base_prompt, reasoning_model).await {
+    let refined = match run_reasoning_step(
+        &groq,
+        &base_prompt,
+        reasoning_model,
+        prompts.get(Prompt::WebSearch),
+    )
+    .await
+    {
         Some(v) => v,
         None => {
             // Fatal preprocessing error: rollback and notify
@@ -173,7 +182,14 @@ pub async fn search(
     );
 
     // Execute the main language model.
-    let raw_answer = match run_main_model(&groq, &prompts, &prompt_for_main, main_model).await {
+    let raw_answer = match run_main_model(
+        &groq,
+        &prompt_for_main,
+        main_model,
+        prompts.get(Prompt::ThinkAndFormat),
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => {
             // Log error without dropping the exception.
@@ -217,7 +233,7 @@ pub async fn search(
         "#,
         user_id,
         msg_chat_id,
-        text,
+        format!("{text}\n\nWeb Resource:\n\n{web_resource}"),
         final_answer,
     )
     .execute(&mut *tx)

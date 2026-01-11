@@ -1,6 +1,7 @@
 // /ask command handler that builds context, preprocesses images, and routes prompts through LLMs.
 
 use crate::{
+    config::Models,
     handlers::{
         types::MessageRow,
         utils::{
@@ -10,7 +11,7 @@ use crate::{
             send_reply_or_plain,
         },
     },
-    prompts::AiPrompt,
+    prompts::{AiPrompt, Prompt},
 };
 use groqai::GroqClient;
 use sqlx::PgPool;
@@ -27,6 +28,7 @@ pub async fn ask(
     text: String,
     pool: PgPool,
     groq: GroqClient,
+    models: Models,
 ) -> Result<(), teloxide::RequestError> {
     let chat_id = msg.chat.id;
     let thread_id: Option<ThreadId> = msg.thread_id;
@@ -103,6 +105,7 @@ pub async fn ask(
             &msg,
             &format!("{text}\n\nHistory:\n\n{history}"),
             &groq,
+            &models.clone().vision,
         )
         .await
     } else {
@@ -110,10 +113,21 @@ pub async fn ask(
     };
 
     let base_prompt = format!("{text}\n\n{image_section}History:\n\n{history}");
-    let reasoning_model = "openai/gpt-oss-20b";
-    let main_model = "openai/gpt-oss-120b";
+    let reasoning_model = if !&messages.is_empty() {
+        &models.clone().preprocessing
+    } else {
+        "openai/gpt-oss-20b"
+    };
+    let main_model = &models.thinking;
 
-    let refined = match run_reasoning_step(&groq, &prompts, &base_prompt, reasoning_model).await {
+    let refined = match run_reasoning_step(
+        &groq,
+        &base_prompt,
+        reasoning_model,
+        prompts.get(Prompt::Preprocess),
+    )
+    .await
+    {
         Some(v) => v,
         None => {
             // Fatal preprocessing error: rollback and notify
@@ -129,7 +143,14 @@ pub async fn ask(
         text, refined
     );
 
-    let raw_answer = match run_main_model(&groq, &prompts, &prompt_for_main, main_model).await {
+    let raw_answer = match run_main_model(
+        &groq,
+        &prompt_for_main,
+        main_model,
+        prompts.get(Prompt::ThinkAndFormat),
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => {
             // Model error: rollback and notify

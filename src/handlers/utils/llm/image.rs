@@ -16,9 +16,9 @@ pub async fn analyze_image(
     msg: &Message,
     user_prompt: &str,
     groq: &GroqClient,
+    vision_model: &str,
 ) -> String {
     // Vision-capable model identifier.
-    let vision_model = "meta-llama/llama-4-scout-17b-16e-instruct";
     let mut image_section = String::new();
 
     // Extract the largest available photo from the message.
