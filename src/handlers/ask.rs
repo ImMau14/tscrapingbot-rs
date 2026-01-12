@@ -63,17 +63,6 @@ pub async fn ask(
         }
     };
 
-    // Start database transaction.
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("DB transaction error: {e}");
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Internal database error.", false, false).await?;
-            return Ok(());
-        }
-    };
-
     // Load recent messages using your stored procedure.
     let history_limit: i32 = 30;
     let messages: Vec<MessageRow> = match sqlx::query_as!(
@@ -84,13 +73,12 @@ pub async fn ask(
         msg_chat_id,
         history_limit,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&pool)
     .await
     {
         Ok(rows) => rows,
         Err(e) => {
             error!("Query failed: {e}");
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Database error.", false, false).await?;
             return Ok(());
@@ -130,8 +118,7 @@ pub async fn ask(
     {
         Some(v) => v,
         None => {
-            // Fatal preprocessing error: rollback and notify
-            let _ = tx.rollback().await;
+            // Fatal preprocessing error
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Error during preprocessing.", false, false).await?;
             return Ok(());
@@ -153,8 +140,7 @@ pub async fn ask(
     {
         Ok(v) => v,
         Err(e) => {
-            // Model error: rollback and notify
-            let _ = tx.rollback().await;
+            // Model error
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
             return Ok(());
@@ -169,8 +155,7 @@ pub async fn ask(
     let send_req = send_reply_or_plain(&bot, &msg, final_answer.clone(), false, true);
 
     if let Err(e) = send_req.await {
-        error!("Telegram send failed: {e} — rolling back DB transaction.");
-        let _ = tx.rollback().await;
+        error!("Telegram send failed: {e} — no DB transaction to roll back.");
         return Ok(());
     }
 
@@ -184,11 +169,10 @@ pub async fn ask(
         text,
         final_answer,
     )
-    .execute(&mut *tx)
+    .execute(&pool)
     .await
     {
         error!("Insert failed: {e}");
-        let _ = tx.rollback().await;
         send_reply_or_plain(
             &bot,
             &msg,
@@ -197,13 +181,6 @@ pub async fn ask(
             false,
         )
         .await?;
-        return Ok(());
-    }
-
-    // Commit; log and notify user on failure
-    if let Err(e) = tx.commit().await {
-        error!("Commit failed: {e}");
-        send_reply_or_plain(&bot, &msg, "Error saving data.", false, false).await?;
     }
 
     Ok(())

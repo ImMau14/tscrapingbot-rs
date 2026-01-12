@@ -19,7 +19,7 @@ use teloxide::{
     prelude::*,
     types::{ChatAction, ThreadId},
 };
-use tracing::error;
+use tracing::{error, info};
 
 pub async fn search(
     bot: Bot,
@@ -64,17 +64,6 @@ pub async fn search(
         }
     };
 
-    // Begin a new database transaction.
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("DB transaction error: {e}");
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Internal database error.", false, false).await?;
-            return Ok(());
-        }
-    };
-
     // Retrieve recent messages for context.
     let history_limit: i32 = 30;
     let messages: Vec<MessageRow> = match sqlx::query_as!(
@@ -85,13 +74,12 @@ pub async fn search(
         msg_chat_id,
         history_limit,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&pool)
     .await
     {
         Ok(rows) => rows,
         Err(e) => {
             error!("Query failed: {e}.");
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Database error", false, false).await?;
             return Ok(());
@@ -105,7 +93,6 @@ pub async fn search(
         Some(url) => {
             if !(url.starts_with("http://") || url.starts_with("https://")) {
                 error!("Search failed: Not URL to search");
-                let _ = tx.rollback().await;
                 keep.shutdown().await;
                 send_reply_or_plain(
                     &bot,
@@ -124,7 +111,6 @@ pub async fn search(
         }
         None => {
             error!("Search failed: Not URL to search");
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(
                 &bot,
@@ -139,12 +125,12 @@ pub async fn search(
     };
 
     // Retrieve the simplified body of the web resource.
+    info!("Fetching simplified body");
     let web_resource: String = match fetch_simplified_body(url).await {
         Ok(res) => res,
         Err(e) => {
             let err_text = e.clone();
             error!("Search failed: {}", err_text);
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Search error.", false, false).await?;
             return Ok(());
@@ -157,6 +143,7 @@ pub async fn search(
     let main_model = &models.thinking;
 
     // Run the reasoning model.
+    info!("Running reasoning step");
     let refined = match run_reasoning_step(
         &groq,
         &base_prompt,
@@ -167,8 +154,6 @@ pub async fn search(
     {
         Some(v) => v,
         None => {
-            // Fatal preprocessing error: rollback and notify
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Error during preprocessing.", false, false).await?;
             return Ok(());
@@ -192,10 +177,7 @@ pub async fn search(
     {
         Ok(v) => v,
         Err(e) => {
-            // Log error without dropping the exception.
             let err_text = e.to_string();
-            // Model error: rollback and notify.
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             error!("Search failed: {}.", err_text);
             send_reply_or_plain(&bot, &msg, "Internal main model error.", false, false).await?;
@@ -214,13 +196,11 @@ pub async fn search(
 
     // Send message (await). Any error must be materialized & logged before later awaits.
     if let Err(e) = send_req.await {
-        // Log error without dropping the exception.
         let err_text = e.to_string();
         error!(
-            "Telegram send failed: {} — rolling back DB transaction.",
+            "Telegram send failed: {} — no DB transaction to rollback.",
             err_text
         );
-        let _ = tx.rollback().await;
         return Ok(());
     }
 
@@ -236,11 +216,10 @@ pub async fn search(
         format!("{text}\n\nWeb Resource:\n\n{web_resource}"),
         final_answer,
     )
-    .execute(&mut *tx)
+    .execute(&pool)
     .await
     {
         error!("Insert failed: {e}");
-        let _ = tx.rollback().await;
         send_reply_or_plain(
             &bot,
             &msg,
@@ -250,12 +229,6 @@ pub async fn search(
         )
         .await?;
         return Ok(());
-    }
-
-    // Commit; log and notify user on failure
-    if let Err(e) = tx.commit().await {
-        error!("Commit failed: {e}");
-        send_reply_or_plain(&bot, &msg, "Error saving data.", false, false).await?;
     }
 
     Ok(())
