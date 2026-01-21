@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MessageRow {
     pub content: Option<String>,
     pub ia_response: Option<String>,

@@ -6,6 +6,7 @@ pub struct AiPrompt {
     pub think_and_format: String,
     pub preprocess: String,
     pub web_search: String,
+    pub vision: String,
 }
 
 pub enum Prompt {
@@ -14,6 +15,7 @@ pub enum Prompt {
     ThinkAndFormat,
     Preprocess,
     WebSearch,
+    Vision,
 }
 
 impl AiPrompt {
@@ -24,6 +26,7 @@ impl AiPrompt {
             think_and_format: include_str!("./prompts/think_and_format.md").to_string(),
             preprocess: include_str!("./prompts/preprocess.md").to_string(),
             web_search: include_str!("./prompts/web_search.md").to_string(),
+            vision: include_str!("./prompts/vision.md").to_string(),
         }
     }
 
@@ -34,6 +37,7 @@ impl AiPrompt {
             Prompt::ThinkAndFormat => self.think_and_format.clone(),
             Prompt::Preprocess => self.preprocess.clone(),
             Prompt::WebSearch => self.web_search.clone(),
+            Prompt::Vision => self.vision.clone(),
         }
     }
 }

@@ -6,20 +6,19 @@ use crate::{
         types::MessageRow,
         utils::{
             ChatActionKeepAlive, escape_telegram_code_entities, extract_user_info,
-            fetch_simplified_body, format_messages_xml,
-            llm::{run_main_model, run_reasoning_step},
-            send_reply_or_plain,
+            fetch_simplified_body, send_reply_or_plain,
         },
     },
     prompts::{AiPrompt, Prompt},
 };
-use groqai::GroqClient;
+use groqai::{ChatMessage, GroqClient, MessageContent, Role};
+use regex::Regex;
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
     types::{ChatAction, ThreadId},
 };
-use tracing::error;
+use tracing::{error, info};
 
 pub async fn search(
     bot: Bot,
@@ -42,7 +41,7 @@ pub async fn search(
         send_reply_or_plain(
             &bot,
             &msg,
-            "I can't reply to an empty message.",
+            "I can't reply to an empty message. Use /search <url> <query>.",
             false,
             false,
         )
@@ -64,20 +63,9 @@ pub async fn search(
         }
     };
 
-    // Begin a new database transaction.
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("DB transaction error: {e}");
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Internal database error.", false, false).await?;
-            return Ok(());
-        }
-    };
-
     // Retrieve recent messages for context.
     let history_limit: i32 = 30;
-    let messages: Vec<MessageRow> = match sqlx::query_as!(
+    let mut messages: Vec<MessageRow> = match sqlx::query_as!(
         MessageRow,
         "SELECT content, ia_response FROM get_recent_messages($1, $2, $3, $4)",
         user_lang,
@@ -85,27 +73,23 @@ pub async fn search(
         msg_chat_id,
         history_limit,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&pool)
     .await
     {
         Ok(rows) => rows,
         Err(e) => {
             error!("Query failed: {e}.");
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Database error", false, false).await?;
             return Ok(());
         }
     };
 
-    let history = format_messages_xml(&messages, 0, false);
-
     // Ensure the provided text contains a valid URL.
-    let url = match text.split_whitespace().next() {
-        Some(url) => {
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
+    let url_str = match text.split_whitespace().next() {
+        Some(candidate) => {
+            if !(candidate.starts_with("http://") || candidate.starts_with("https://")) {
                 error!("Search failed: Not URL to search");
-                let _ = tx.rollback().await;
                 keep.shutdown().await;
                 send_reply_or_plain(
                     &bot,
@@ -118,13 +102,11 @@ pub async fn search(
                 return Ok(());
             }
 
-            let parsed_url = url.replace('&', "%26");
-
-            &format!("http://api.scrape.do/?token={scrapedo_token}&url={parsed_url}")
+            // Encode ampersands to keep query safe.
+            candidate.replace('&', "%26")
         }
         None => {
             error!("Search failed: Not URL to search");
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(
                 &bot,
@@ -139,93 +121,151 @@ pub async fn search(
     };
 
     // Retrieve the simplified body of the web resource.
-    let web_resource: String = match fetch_simplified_body(url).await {
-        Ok(res) => res,
+    info!("Fetching simplified body");
+    let web_resource: String = match fetch_simplified_body(&format!(
+        "http://api.scrape.do/?token={scrapedo_token}&url={url_str}"
+    ))
+    .await
+    {
+        Ok(res) => {
+            let re = Regex::new(r"\{[^{}]*\}").unwrap();
+
+            if re.find(&res).is_some() && res.contains(r#""StatusCode":400"#) {
+                match fetch_simplified_body(&url_str).await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        let err_text = e.clone();
+                        error!("Search failed: {}", err_text);
+                        keep.shutdown().await;
+                        send_reply_or_plain(&bot, &msg, "Search error.", false, false).await?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                res
+            }
+        }
         Err(e) => {
             let err_text = e.clone();
             error!("Search failed: {}", err_text);
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Search error.", false, false).await?;
             return Ok(());
         }
     };
 
-    // Prepare the base prompt for the reasoning step.
-    let base_prompt = format!("{text}\n\nWebResource:\n{web_resource}History:\n\n{history}");
-    let reasoning_model = &models.clone().preprocessing;
+    // Build a single conversation array and use only the main model.
     let main_model = &models.thinking;
+    let sec_model = &models.preprocessing;
+    let system_prompt = prompts.get(Prompt::ThinkAndFormat);
 
-    // Run the reasoning model.
-    let refined = match run_reasoning_step(
-        &groq,
-        &base_prompt,
-        reasoning_model,
-        prompts.get(Prompt::WebSearch),
-    )
-    .await
-    {
-        Some(v) => v,
-        None => {
-            // Fatal preprocessing error: rollback and notify
-            let _ = tx.rollback().await;
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Error during preprocessing.", false, false).await?;
-            return Ok(());
+    // Build conversation: system, historical turns, then the current user message.
+    let mut convo: Vec<ChatMessage> = Vec::new();
+    convo.push(ChatMessage::new_text(Role::System, system_prompt));
+
+    // Append historical turns (if any). For each saved row: user content then assistant response.
+    messages.reverse();
+    for row in &messages {
+        if let Some(ref user_content) = row.content {
+            convo.push(ChatMessage::new_text(Role::User, user_content.clone()));
         }
-    };
+        if let Some(ref assistant_content) = row.ia_response {
+            convo.push(ChatMessage::new_text(
+                Role::Assistant,
+                assistant_content.clone(),
+            ));
+        }
+    }
 
-    // Construct the prompt for the main model.
-    let prompt_for_main = format!(
-        "Main lang is \"{user_lang}\":\n\nOriginal prompt: {}\n\nResource for you response: {}\n\nWebResource:\n{web_resource}",
-        text, refined
-    );
+    // Add the user prompt (HTML will be passed separately below).
+    let current_user_msg = format!("Main lang is \"{user_lang}\":\n\nUser prompt: {}", text);
+    convo.push(ChatMessage::new_text(Role::User, current_user_msg));
 
-    // Execute the main language model.
-    let raw_answer = match run_main_model(
-        &groq,
-        &prompt_for_main,
-        main_model,
-        prompts.get(Prompt::ThinkAndFormat),
-    )
-    .await
+    // Pass the fetched HTML/body as a separate user message to improve tokenization/context handling.
+    convo.push(ChatMessage::new_text(
+        Role::User,
+        format!("WebResource:\n{}", &web_resource),
+    ));
+
+    let resp = match groq
+        .chat(main_model)
+        .messages(convo)
+        .max_completion_tokens(3000)
+        .temperature(0.0)
+        .send()
+        .await
     {
-        Ok(v) => v,
+        Ok(r) => r,
         Err(e) => {
-            // Log error without dropping the exception.
-            let err_text = e.to_string();
-            // Model error: rollback and notify.
-            let _ = tx.rollback().await;
             keep.shutdown().await;
-            error!("Search failed: {}.", err_text);
-            send_reply_or_plain(&bot, &msg, "Internal main model error.", false, false).await?;
+            send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
             return Ok(());
         }
     };
 
-    // Escape for Telegram HTML before sending and saving.
+    let raw_answer = if let MessageContent::Text(text) = &resp.choices[0].message.content {
+        text.trim().to_string()
+    } else {
+        String::new()
+    };
+
     let final_answer = escape_telegram_code_entities(&raw_answer);
 
-    // Stop typing indicator BEFORE any DB awaits that could be after sending.
     keep.shutdown().await;
 
-    // Build send request (no await yet)
     let send_req = send_reply_or_plain(&bot, &msg, final_answer.clone(), false, true);
 
-    // Send message (await). Any error must be materialized & logged before later awaits.
     if let Err(e) = send_req.await {
-        // Log error without dropping the exception.
         let err_text = e.to_string();
+        if err_text.to_lowercase().contains("parse") || err_text.to_lowercase().contains("parsing")
+        {
+            error!("Telegram parse error: {}.", err_text);
+
+            // Ask preprocessing model to try to apply HTML/formatting to the raw model output
+            let fmt_res = match groq
+                .chat(sec_model)
+                .messages(vec![
+                    ChatMessage::new_text(Role::System, prompts.get(Prompt::Html)),
+                    ChatMessage::new_text(Role::User, raw_answer.clone()),
+                ])
+                .max_completion_tokens(3000)
+                .temperature(0.0)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    keep.shutdown().await;
+                    send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
+                    return Ok(());
+                }
+            };
+
+            let fmt_text = if let MessageContent::Text(text) = &fmt_res.choices[0].message.content {
+                text.trim().to_string()
+            } else {
+                String::new()
+            };
+
+            let reformated_answer = escape_telegram_code_entities(&fmt_text);
+
+            let fmt_req = send_reply_or_plain(&bot, &msg, &reformated_answer, false, true);
+
+            if let Err(e) = fmt_req.await {
+                error!("Telegram send failed: {e} — no DB transaction to roll back.");
+                return Ok(());
+            }
+
+            return Ok(());
+        }
+
         error!(
-            "Telegram send failed: {} — rolling back DB transaction.",
+            "Telegram send failed: {} — no DB transaction to rollback.",
             err_text
         );
-        let _ = tx.rollback().await;
         return Ok(());
     }
 
-    // Save message into DB (await inside the branch)
-    // Insert the sent message into the database.
     if let Err(e) = sqlx::query!(
         r#"
         INSERT INTO messages (user_telegram_id, chat_telegram_id, content, ia_response)
@@ -236,11 +276,10 @@ pub async fn search(
         format!("{text}\n\nWeb Resource:\n\n{web_resource}"),
         final_answer,
     )
-    .execute(&mut *tx)
+    .execute(&pool)
     .await
     {
         error!("Insert failed: {e}");
-        let _ = tx.rollback().await;
         send_reply_or_plain(
             &bot,
             &msg,
@@ -250,12 +289,6 @@ pub async fn search(
         )
         .await?;
         return Ok(());
-    }
-
-    // Commit; log and notify user on failure
-    if let Err(e) = tx.commit().await {
-        error!("Commit failed: {e}");
-        send_reply_or_plain(&bot, &msg, "Error saving data.", false, false).await?;
     }
 
     Ok(())

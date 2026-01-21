@@ -6,14 +6,13 @@ use crate::{
         types::MessageRow,
         utils::{
             ChatActionKeepAlive, escape_telegram_code_entities, extract_user_info,
-            format_messages_xml,
-            llm::{analyze_image, message_has_photo, run_main_model, run_reasoning_step},
+            llm::{analyze_image, message_has_photo},
             send_reply_or_plain,
         },
     },
     prompts::{AiPrompt, Prompt},
 };
-use groqai::GroqClient;
+use groqai::{ChatMessage, GroqClient, MessageContent, Role};
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
@@ -21,7 +20,7 @@ use teloxide::{
 };
 use tracing::error;
 
-// Handles the /ask command lifecycle: context loading, iamge analysis, LLM calls, and persistence.
+// /ask command handler that builds context, preprocesses images, and routes prompts through LLMs.
 pub async fn ask(
     bot: Bot,
     msg: Message,
@@ -42,7 +41,7 @@ pub async fn ask(
         send_reply_or_plain(
             &bot,
             &msg,
-            "I can't reply to an empty message.",
+            "I can't reply to an empty message. Use /ask <query>.",
             false,
             false,
         )
@@ -63,20 +62,9 @@ pub async fn ask(
         }
     };
 
-    // Start database transaction.
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("DB transaction error: {e}");
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Internal database error.", false, false).await?;
-            return Ok(());
-        }
-    };
-
     // Load recent messages using your stored procedure.
     let history_limit: i32 = 30;
-    let messages: Vec<MessageRow> = match sqlx::query_as!(
+    let mut messages: Vec<MessageRow> = match sqlx::query_as!(
         MessageRow,
         "SELECT content, ia_response FROM get_recent_messages($1, $2, $3, $4)",
         user_lang,
@@ -84,26 +72,26 @@ pub async fn ask(
         msg_chat_id,
         history_limit,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&pool)
     .await
     {
         Ok(rows) => rows,
         Err(e) => {
             error!("Query failed: {e}");
-            let _ = tx.rollback().await;
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, "Database error.", false, false).await?;
             return Ok(());
         }
     };
-
-    let history = format_messages_xml(&messages, 0, false);
+    messages.reverse();
 
     let image_section = if message_has_photo(&msg) {
         analyze_image(
             &bot,
             &msg,
-            &format!("{text}\n\nHistory:\n\n{history}"),
+            &text,
+            &prompts.get(Prompt::Vision),
+            messages.clone(),
             &groq,
             &models.clone().vision,
         )
@@ -112,53 +100,64 @@ pub async fn ask(
         String::new()
     };
 
-    let base_prompt = format!("{text}\n\n{image_section}History:\n\n{history}");
-    let reasoning_model = if !&messages.is_empty() {
-        &models.clone().preprocessing
-    } else {
-        "openai/gpt-oss-20b"
-    };
     let main_model = &models.thinking;
 
-    let refined = match run_reasoning_step(
-        &groq,
-        &base_prompt,
-        reasoning_model,
-        prompts.get(Prompt::Preprocess),
-    )
-    .await
-    {
-        Some(v) => v,
-        None => {
-            // Fatal preprocessing error: rollback and notify
-            let _ = tx.rollback().await;
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, "Error during preprocessing.", false, false).await?;
-            return Ok(());
+    // Build conversation messages: system prompt, previous turns (user -> assistant), then current user message.
+    let system_prompt = prompts.get(Prompt::ThinkAndFormat);
+
+    let mut convo: Vec<ChatMessage> = Vec::new();
+    convo.push(ChatMessage::new_text(Role::System, system_prompt));
+
+    // Append historical turns (if any). For each saved row: user content then assistant response.
+    for row in &messages {
+        if let Some(ref user_content) = row.content {
+            convo.push(ChatMessage::new_text(Role::User, user_content.clone()));
         }
+        if let Some(ref assistant_content) = row.ia_response {
+            convo.push(ChatMessage::new_text(
+                Role::Assistant,
+                assistant_content.clone(),
+            ));
+        }
+    }
+
+    // Current user message: include image_section if present.
+    let current_user_msg = if image_section.is_empty() {
+        format!(
+            "Main lang is \"{user_lang}\":\n\nOriginal prompt: {}\n",
+            text
+        )
+    } else {
+        format!(
+            "Main lang is \"{user_lang}\":\n\nOriginal prompt: {}\n\nImage analysis:\n{}\n",
+            text, image_section
+        )
     };
+    convo.push(ChatMessage::new_text(Role::User, current_user_msg));
 
-    let prompt_for_main = format!(
-        "Main lang is \"{user_lang}\":\n\nOriginal prompt: {}\n\nResource for you response: {}",
-        text, refined
-    );
-
-    let raw_answer = match run_main_model(
-        &groq,
-        &prompt_for_main,
-        main_model,
-        prompts.get(Prompt::ThinkAndFormat),
-    )
-    .await
+    // Call the main model directly with the conversation (no intermediate reasoning step).
+    let resp = match groq
+        .chat(main_model)
+        .messages(convo)
+        .max_completion_tokens(3000)
+        .temperature(0.0)
+        .send()
+        .await
     {
-        Ok(v) => v,
+        Ok(r) => r,
         Err(e) => {
-            // Model error: rollback and notify
-            let _ = tx.rollback().await;
+            // Model error
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
             return Ok(());
         }
+    };
+
+    // Extract textual content (same logic you had in helpers).
+    let raw_answer = if let MessageContent::Text(text) = &resp.choices[0].message.content {
+        text.trim().to_string()
+    } else {
+        String::new()
     };
 
     // Escape for Telegram HTML before sending and saving.
@@ -169,8 +168,7 @@ pub async fn ask(
     let send_req = send_reply_or_plain(&bot, &msg, final_answer.clone(), false, true);
 
     if let Err(e) = send_req.await {
-        error!("Telegram send failed: {e} — rolling back DB transaction.");
-        let _ = tx.rollback().await;
+        error!("Telegram send failed: {e} — no DB transaction to roll back.");
         return Ok(());
     }
 
@@ -184,11 +182,10 @@ pub async fn ask(
         text,
         final_answer,
     )
-    .execute(&mut *tx)
+    .execute(&pool)
     .await
     {
         error!("Insert failed: {e}");
-        let _ = tx.rollback().await;
         send_reply_or_plain(
             &bot,
             &msg,
@@ -197,13 +194,6 @@ pub async fn ask(
             false,
         )
         .await?;
-        return Ok(());
-    }
-
-    // Commit; log and notify user on failure
-    if let Err(e) = tx.commit().await {
-        error!("Commit failed: {e}");
-        send_reply_or_plain(&bot, &msg, "Error saving data.", false, false).await?;
     }
 
     Ok(())
