@@ -41,7 +41,7 @@ pub async fn ask(
         send_reply_or_plain(
             &bot,
             &msg,
-            "I can't reply to an empty message.",
+            "I can't reply to an empty message. Use /ask <query>.",
             false,
             false,
         )

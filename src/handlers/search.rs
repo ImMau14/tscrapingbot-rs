@@ -41,7 +41,7 @@ pub async fn search(
         send_reply_or_plain(
             &bot,
             &msg,
-            "I can't reply to an empty message.",
+            "I can't reply to an empty message. Use /search <url> <query>.",
             false,
             false,
         )
