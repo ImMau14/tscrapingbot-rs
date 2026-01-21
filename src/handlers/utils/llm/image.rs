@@ -1,5 +1,6 @@
 // Image analysis helper that downloads a Telegram photo and sends it to a vision LLM.
 
+use crate::handlers::types::MessageRow;
 use base64::{Engine as _, engine::general_purpose};
 use groqai::{ChatMessage, GroqClient, ImageUrl, MessageContent, MessagePart, Role};
 use reqwest::Client;
@@ -15,6 +16,8 @@ pub async fn analyze_image(
     bot: &Bot,
     msg: &Message,
     user_prompt: &str,
+    system_prompt: &str,
+    history: Vec<MessageRow>,
     groq: &GroqClient,
     vision_model: &str,
 ) -> String {
@@ -34,24 +37,28 @@ pub async fn analyze_image(
                     let img_b64 = general_purpose::STANDARD.encode(&img_bytes);
                     let data_url = format!("data:{};base64,{}", mime, img_b64);
 
-                    // Instruction that strictly ties analysis to the user request.
-                    let vision_instruction = format!(
-                        "Analyze the image strictly in relation to the user's request.\n\n\
-                         User request:\n\"{}\"\n\n\
-                         Tasks:\n\
-                         - Describe only elements relevant to the request\n\
-                         - Preserve fine details (text, symbols, UI elements, numbers)\n\
-                         - Extract visible text verbatim (OCR) if relevant\n\
-                         - If something is unclear, state it explicitly",
-                        user_prompt
-                    );
+                    let mut convo: Vec<ChatMessage> = Vec::new();
+                    // System prompt for the vision model.
+                    convo.push(ChatMessage::new_text(Role::System, system_prompt));
+
+                    for row in &history {
+                        if let Some(ref user_content) = row.content {
+                            convo.push(ChatMessage::new_text(Role::User, user_content.clone()));
+                        }
+                        if let Some(ref assistant_content) = row.ia_response {
+                            convo.push(ChatMessage::new_text(
+                                Role::Assistant,
+                                assistant_content.clone(),
+                            ));
+                        }
+                    }
 
                     // Build multimodal message: text first, image second.
                     let vision_msg = ChatMessage {
                         role: Role::User,
                         content: MessageContent::Parts(vec![
                             MessagePart::Text {
-                                text: vision_instruction,
+                                text: user_prompt.to_string(),
                             },
                             MessagePart::ImageUrl {
                                 image_url: ImageUrl::new(data_url),
@@ -61,10 +68,13 @@ pub async fn analyze_image(
                         tool_call_id: None,
                     };
 
+                    // Append the multimodal user message to the conversation.
+                    convo.push(vision_msg);
+
                     // Send request to the vision model.
                     match groq
                         .chat(vision_model)
-                        .messages(vec![vision_msg])
+                        .messages(convo)
                         .max_completion_tokens(1200)
                         .temperature(0.2)
                         .send()
