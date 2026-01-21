@@ -12,6 +12,7 @@ use crate::{
     prompts::{AiPrompt, Prompt},
 };
 use groqai::{ChatMessage, GroqClient, MessageContent, Role};
+use regex::Regex;
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
@@ -102,8 +103,7 @@ pub async fn search(
             }
 
             // Encode ampersands to keep query safe.
-            let parsed_url = candidate.replace('&', "%26");
-            format!("http://api.scrape.do/?token={scrapedo_token}&url={parsed_url}")
+            candidate.replace('&', "%26")
         }
         None => {
             error!("Search failed: Not URL to search");
@@ -122,8 +122,29 @@ pub async fn search(
 
     // Retrieve the simplified body of the web resource.
     info!("Fetching simplified body");
-    let web_resource: String = match fetch_simplified_body(&url_str).await {
-        Ok(res) => res,
+    let web_resource: String = match fetch_simplified_body(&format!(
+        "http://api.scrape.do/?token={scrapedo_token}&url={url_str}"
+    ))
+    .await
+    {
+        Ok(res) => {
+            let re = Regex::new(r"\{[^{}]*\}").unwrap();
+
+            if re.find(&res).is_some() && res.contains(r#""StatusCode":400"#) {
+                match fetch_simplified_body(&url_str).await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        let err_text = e.clone();
+                        error!("Search failed: {}", err_text);
+                        keep.shutdown().await;
+                        send_reply_or_plain(&bot, &msg, "Search error.", false, false).await?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                res
+            }
+        }
         Err(e) => {
             let err_text = e.clone();
             error!("Search failed: {}", err_text);
