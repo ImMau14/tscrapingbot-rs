@@ -2,6 +2,7 @@
 
 use crate::handlers::utils::{ChatActionKeepAlive, send_reply_or_plain};
 use kuchiki::traits::*;
+use regex::Regex;
 use reqwest;
 use std::time::Duration;
 use teloxide::{
@@ -11,7 +12,7 @@ use teloxide::{
 use tracing::error;
 
 // Handles the /dollar command, retrieves price and sends reply.
-pub async fn dollar(bot: Bot, msg: Message) -> Result<(), teloxide::RequestError> {
+pub async fn dollar(bot: Bot, msg: Message, text: String) -> Result<(), teloxide::RequestError> {
     let chat_id = msg.chat.id;
     let thread_id: Option<ThreadId> = msg.thread_id;
 
@@ -100,10 +101,45 @@ pub async fn dollar(bot: Bot, msg: Message) -> Result<(), teloxide::RequestError
     // Send appropriate reply based on extraction result.
     match dollar_price_opt {
         Some(dollar_price) => {
-            let message = format!("<b>BCV</b>: <code>{dollar_price} Bs.</code>");
-            keep.shutdown().await;
-            send_reply_or_plain(&bot, &msg, message, false, true).await?;
-            Ok(())
+            if text.is_empty() {
+                let message = format!("<b>BCV</b>: <code>{dollar_price} Bs.</code>");
+                keep.shutdown().await;
+                send_reply_or_plain(&bot, &msg, message, false, true).await?;
+                Ok(())
+            } else {
+                let re_currency = Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(bs|\$)").unwrap();
+                if let Some(caps) = re_currency.captures(&text) {
+                    let amount: f64 = caps[1].parse().unwrap_or(0.0);
+                    let currency = caps[2].to_lowercase();
+
+                    let (converted, target_currency) = if currency == "bs" {
+                        // Bs to $
+                        (amount / dollar_price, "$")
+                    } else {
+                        // $ to Bs
+                        (amount * dollar_price, "Bs")
+                    };
+
+                    let message = format!(
+                        "<b>BCV</b>: <code>{:.2} {}</code>",
+                        converted, target_currency
+                    );
+                    keep.shutdown().await;
+                    send_reply_or_plain(&bot, &msg, message, false, true).await?;
+                } else {
+                    let re_number = Regex::new(r"\d+(?:\.\d+)?").unwrap();
+                    if re_number.is_match(&text) {
+                        let error_msg = "Please specify the currency (Bs or $) along with the amount, e.g., '10 Bs' or '10 $'.";
+                        keep.shutdown().await;
+                        send_reply_or_plain(&bot, &msg, error_msg, false, false).await?;
+                    } else {
+                        let message = format!("<b>BCV</b>: <code>{dollar_price} Bs</code>.");
+                        keep.shutdown().await;
+                        send_reply_or_plain(&bot, &msg, message, false, true).await?;
+                    }
+                }
+                Ok(())
+            }
         }
         None => {
             keep.shutdown().await;

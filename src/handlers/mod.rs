@@ -162,8 +162,8 @@ pub async fn handle_command(
                             tracing::error!("Start command failed: {:?}", e);
                         }
                     }
-                    Command::Dollar => {
-                        if let Err(e) = dollar(bot, msg).await {
+                    Command::Dollar(text) => {
+                        if let Err(e) = dollar(bot, msg, text).await {
                             tracing::error!("Dollar command failed: {:?}", e);
                         }
                     }
