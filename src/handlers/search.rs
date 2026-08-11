@@ -6,7 +6,7 @@ use crate::{
         types::MessageRow,
         utils::{
             ChatActionKeepAlive, escape_telegram_code_entities, extract_user_info,
-            fetch_simplified_body, send_reply_or_plain,
+            fetch_simplified_body, send_chat_with_history, send_reply_or_plain, truncate_text,
         },
     },
     prompts::{AiPrompt, Prompt},
@@ -19,6 +19,10 @@ use teloxide::{
     types::{ChatAction, ThreadId},
 };
 use tracing::{error, info};
+
+// Shortened copy of the scraped page kept in history (~1.5K tokens). The
+// full simplified body still reaches the model in the current request.
+const STORED_WEB_RESOURCE_CHARS: usize = 6_000;
 
 pub async fn search(
     bot: Bot,
@@ -159,54 +163,35 @@ pub async fn search(
     let sec_model = &models.preprocessing;
     let system_prompt = prompts.get(Prompt::ThinkAndFormat);
 
-    // Build conversation: system, historical turns, then the current user message.
-    let mut convo: Vec<ChatMessage> = Vec::new();
-    convo.push(ChatMessage::new_text(Role::System, system_prompt));
-
-    // Append historical turns (if any). For each saved row: user content then assistant response.
+    // Historical turns stay chronological (oldest-first); the helper trims them
+    // to a token budget and retries with a smaller one on context overflow.
     messages.reverse();
-    for row in &messages {
-        if let Some(ref user_content) = row.content {
-            convo.push(ChatMessage::new_text(Role::User, user_content.clone()));
-        }
-        if let Some(ref assistant_content) = row.ia_response {
-            convo.push(ChatMessage::new_text(
-                Role::Assistant,
-                assistant_content.clone(),
-            ));
-        }
-    }
 
     // Add the user prompt (HTML will be passed separately below).
     let current_user_msg = format!("Main lang is \"{user_lang}\":\n\nUser prompt: {}", text);
-    convo.push(ChatMessage::new_text(Role::User, current_user_msg));
 
     // Pass the fetched HTML/body as a separate user message to improve tokenization/context handling.
-    convo.push(ChatMessage::new_text(
-        Role::User,
-        format!("WebResource:\n{}", &web_resource),
-    ));
+    let web_msg = format!("WebResource:\n{}", &web_resource);
 
-    let resp = match groq
-        .chat(main_model)
-        .messages(convo)
-        .max_completion_tokens(3000)
-        .temperature(0.0)
-        .send()
-        .await
+    let raw_answer = match send_chat_with_history(
+        &groq,
+        main_model,
+        system_prompt,
+        &messages,
+        vec![
+            ChatMessage::new_text(Role::User, current_user_msg),
+            ChatMessage::new_text(Role::User, web_msg),
+        ],
+        3000,
+    )
+    .await
     {
-        Ok(r) => r,
+        Ok(answer) => answer,
         Err(e) => {
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
             return Ok(());
         }
-    };
-
-    let raw_answer = if let MessageContent::Text(text) = &resp.choices[0].message.content {
-        text.trim().to_string()
-    } else {
-        String::new()
     };
 
     let final_answer = escape_telegram_code_entities(&raw_answer);
@@ -273,7 +258,12 @@ pub async fn search(
         "#,
         user_id,
         msg_chat_id,
-        format!("{text}\n\nWeb Resource:\n\n{web_resource}"),
+        // Store a shortened version of the scraped page: the full body would
+        // replay into every future request and eat the context window.
+        format!(
+            "{text}\n\nWeb Resource:\n\n{}",
+            truncate_text(&web_resource, STORED_WEB_RESOURCE_CHARS)
+        ),
         final_answer,
     )
     .execute(&pool)

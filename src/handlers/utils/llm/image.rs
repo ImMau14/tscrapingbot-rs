@@ -1,6 +1,9 @@
 // Image analysis helper that downloads a Telegram photo and sends it to a vision LLM.
 
-use crate::handlers::types::MessageRow;
+use crate::handlers::{
+    types::MessageRow,
+    utils::context::{trim_history_to_budget, truncate_text},
+};
 use base64::{Engine as _, engine::general_purpose};
 use groqai::{ChatMessage, GroqClient, ImageUrl, MessageContent, MessagePart, Role};
 use reqwest::Client;
@@ -10,6 +13,10 @@ use teloxide::{
     types::{FileId, Message},
 };
 use tracing::error;
+
+// Keep the vision-model context lean: image analysis only needs the gist of
+// the recent conversation, not full scraped pages.
+const VISION_HISTORY_CHARS: usize = 20_000;
 
 // Analyzes a Telegram image using a vision model, guided by the user prompt.
 pub async fn analyze_image(
@@ -41,14 +48,23 @@ pub async fn analyze_image(
                     // System prompt for the vision model.
                     convo.push(ChatMessage::new_text(Role::System, system_prompt));
 
-                    for row in &history {
+                    // The vision model does not need full scraped pages either:
+                    // bound the history length and trim oversized fields.
+                    let mut newest_first = history.clone();
+                    newest_first.reverse();
+                    let mut trimmed = trim_history_to_budget(&newest_first, VISION_HISTORY_CHARS);
+                    trimmed.reverse(); // chronological for the model
+                    for row in &trimmed {
                         if let Some(ref user_content) = row.content {
-                            convo.push(ChatMessage::new_text(Role::User, user_content.clone()));
+                            convo.push(ChatMessage::new_text(
+                                Role::User,
+                                truncate_text(user_content, 4_000),
+                            ));
                         }
                         if let Some(ref assistant_content) = row.ia_response {
                             convo.push(ChatMessage::new_text(
                                 Role::Assistant,
-                                assistant_content.clone(),
+                                truncate_text(assistant_content, 4_000),
                             ));
                         }
                     }

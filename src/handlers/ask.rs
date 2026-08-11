@@ -7,12 +7,12 @@ use crate::{
         utils::{
             ChatActionKeepAlive, escape_telegram_code_entities, extract_user_info,
             llm::{analyze_image, message_has_photo},
-            send_reply_or_plain,
+            send_chat_with_history, send_reply_or_plain,
         },
     },
     prompts::{AiPrompt, Prompt},
 };
-use groqai::{ChatMessage, GroqClient, MessageContent, Role};
+use groqai::{ChatMessage, GroqClient, Role};
 use sqlx::PgPool;
 use teloxide::{
     prelude::*,
@@ -105,22 +105,6 @@ pub async fn ask(
     // Build conversation messages: system prompt, previous turns (user -> assistant), then current user message.
     let system_prompt = prompts.get(Prompt::ThinkAndFormat);
 
-    let mut convo: Vec<ChatMessage> = Vec::new();
-    convo.push(ChatMessage::new_text(Role::System, system_prompt));
-
-    // Append historical turns (if any). For each saved row: user content then assistant response.
-    for row in &messages {
-        if let Some(ref user_content) = row.content {
-            convo.push(ChatMessage::new_text(Role::User, user_content.clone()));
-        }
-        if let Some(ref assistant_content) = row.ia_response {
-            convo.push(ChatMessage::new_text(
-                Role::Assistant,
-                assistant_content.clone(),
-            ));
-        }
-    }
-
     // Current user message: include image_section if present.
     let current_user_msg = if image_section.is_empty() {
         format!(
@@ -133,31 +117,26 @@ pub async fn ask(
             text, image_section
         )
     };
-    convo.push(ChatMessage::new_text(Role::User, current_user_msg));
 
-    // Call the main model directly with the conversation (no intermediate reasoning step).
-    let resp = match groq
-        .chat(main_model)
-        .messages(convo)
-        .max_completion_tokens(3000)
-        .temperature(0.0)
-        .send()
-        .await
+    // Call the main model directly (no intermediate reasoning step). History is
+    // trimmed to a token budget and retried with a smaller one on overflow.
+    let raw_answer = match send_chat_with_history(
+        &groq,
+        main_model,
+        system_prompt,
+        &messages,
+        vec![ChatMessage::new_text(Role::User, current_user_msg)],
+        3000,
+    )
+    .await
     {
-        Ok(r) => r,
+        Ok(answer) => answer,
         Err(e) => {
             // Model error
             keep.shutdown().await;
             send_reply_or_plain(&bot, &msg, format!("Error: {e}."), false, false).await?;
             return Ok(());
         }
-    };
-
-    // Extract textual content (same logic you had in helpers).
-    let raw_answer = if let MessageContent::Text(text) = &resp.choices[0].message.content {
-        text.trim().to_string()
-    } else {
-        String::new()
     };
 
     // Escape for Telegram HTML before sending and saving.

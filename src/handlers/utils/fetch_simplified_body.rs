@@ -1,7 +1,13 @@
+use crate::handlers::utils::truncate_text;
 use html_escape::encode_text;
 use kuchiki::NodeRef;
 use kuchiki::traits::*;
 use reqwest;
+
+// Cap the simplified body so one scrape cannot consume the whole model context.
+// ~12K chars ≈ 3K tokens: enough for a page summary, small enough to keep
+// several scrapes inside the conversation window.
+const MAX_BODY_CHARS: usize = 12_000;
 
 pub async fn fetch_simplified_body(url: &str) -> Result<String, String> {
     // Map reqwest errors to string descriptions
@@ -86,5 +92,5 @@ pub async fn fetch_simplified_body(url: &str) -> Result<String, String> {
 
     let result = format!("<body>{}</body>", simplified.trim());
 
-    Ok(result)
+    Ok(truncate_text(&result, MAX_BODY_CHARS))
 }
