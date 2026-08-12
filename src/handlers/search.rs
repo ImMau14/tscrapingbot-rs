@@ -171,7 +171,7 @@ pub async fn search(
     let current_user_msg = format!("Main lang is \"{user_lang}\":\n\nUser prompt: {}", text);
 
     // Pass the fetched HTML/body as a separate user message to improve tokenization/context handling.
-    let web_msg = format!("WebResource:\n{}", &web_resource);
+    let web_msg = format!("WebResource:\n{web_resource}");
 
     let raw_answer = match send_chat_with_history(
         &groq,

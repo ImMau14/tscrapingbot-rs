@@ -48,10 +48,7 @@ pub fn trim_history_to_budget(rows: &[MessageRow], max_chars: usize) -> Vec<Mess
     let mut kept: Vec<MessageRow> = Vec::new();
 
     for row in rows {
-        let size = row
-            .content
-            .as_deref()
-            .map_or(0, |c| c.chars().count())
+        let size = row.content.as_deref().map_or(0, |c| c.chars().count())
             + row.ia_response.as_deref().map_or(0, |r| r.chars().count());
 
         if kept.is_empty() || used + size <= max_chars {
@@ -108,7 +105,8 @@ pub async fn send_chat_with_history(
         let mut kept = trim_history_to_budget(&newest_first, *budget);
         kept.reverse();
 
-        let mut convo: Vec<ChatMessage> = Vec::with_capacity(kept.len() * 2 + current_msgs.len() + 1);
+        let mut convo: Vec<ChatMessage> =
+            Vec::with_capacity(kept.len() * 2 + current_msgs.len() + 1);
         convo.push(ChatMessage::new_text(Role::System, system_prompt.clone()));
 
         for row in &kept {
@@ -133,11 +131,13 @@ pub async fn send_chat_with_history(
             .await
         {
             Ok(resp) => {
-                return Ok(if let MessageContent::Text(text) = &resp.choices[0].message.content {
-                    text.trim().to_string()
-                } else {
-                    String::new()
-                });
+                return Ok(
+                    if let MessageContent::Text(text) = &resp.choices[0].message.content {
+                        text.trim().to_string()
+                    } else {
+                        String::new()
+                    },
+                );
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -145,7 +145,10 @@ pub async fn send_chat_with_history(
                     return Err(msg);
                 }
                 last_err = Some(msg);
-                error!("Context length error with {} chars budget; retrying smaller", budget);
+                error!(
+                    "Context length error with {} chars budget; retrying smaller",
+                    budget
+                );
             }
         }
     }
@@ -190,7 +193,10 @@ mod tests {
 
     #[test]
     fn trim_keeps_newest_within_budget() {
-        let rows = vec![row("user newest", "resp newest"), row("old one", "resp old")];
+        let rows = vec![
+            row("user newest", "resp newest"),
+            row("old one", "resp old"),
+        ];
         let kept = trim_history_to_budget(&rows, 10);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].content.as_deref(), Some("user newest"));
@@ -199,12 +205,21 @@ mod tests {
     #[test]
     fn trim_always_keeps_newest_even_oversized() {
         let rows = vec![
-            row("huge content that exceeds any budget we could set here", "x"),
+            row(
+                "huge content that exceeds any budget we could set here",
+                "x",
+            ),
             row("small", "small"),
         ];
         let kept = trim_history_to_budget(&rows, 5);
         assert_eq!(kept.len(), 1);
-        assert!(kept[0].content.as_deref().unwrap_or_default().starts_with("huge"));
+        assert!(
+            kept[0]
+                .content
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("huge")
+        );
     }
 
     #[test]
