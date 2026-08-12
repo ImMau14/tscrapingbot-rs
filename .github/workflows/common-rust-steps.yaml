@@ -20,10 +20,15 @@ jobs:
     env:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       SQLX_OFFLINE: ${{ secrets.SQLX_OFFLINE }}
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
+
+      - name: Run sccache cache
+        uses: actions-rust-lang/sccache-action@v1
 
       - name: Install Rust (stable + clippy + rustfmt)
         uses: actions-rust-lang/setup-rust-toolchain@v1
