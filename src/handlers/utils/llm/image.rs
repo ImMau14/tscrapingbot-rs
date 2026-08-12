@@ -2,7 +2,7 @@
 
 use crate::handlers::{
     types::MessageRow,
-    utils::context::{trim_history_to_budget, truncate_text},
+    utils::context::{is_tpm_error, trim_history_to_budget, truncate_text},
 };
 use base64::{Engine as _, engine::general_purpose};
 use groqai::{ChatMessage, GroqClient, ImageUrl, MessageContent, MessagePart, Role};
@@ -143,9 +143,18 @@ pub async fn analyze_image(
                             }
                         }
                         Err(e) => {
-                            // Vision model request failed.
-                            error!("Vision model call failed: {}", e);
-                            image_section = "Image analysis: [vision model error]\n\n".to_string();
+                            // Vision model request failed: surface the real
+                            // cause instead of hiding it behind a generic
+                            // placeholder.
+                            let err = e.to_string();
+                            error!("Vision model call failed: {}", err);
+                            if is_tpm_error(&err) {
+                                image_section = "Image analysis: [vision model rate limit (Groq free tier: 8000 tokens/minute). Wait a minute and try again]\n\n"
+                                    .to_string();
+                            } else {
+                                image_section =
+                                    format!("Image analysis: [vision model error: {err}]\n\n");
+                            }
                         }
                     }
                 }
