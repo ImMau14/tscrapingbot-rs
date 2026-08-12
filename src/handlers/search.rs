@@ -20,9 +20,10 @@ use teloxide::{
 };
 use tracing::{error, info};
 
-// Shortened copy of the scraped page kept in history (~1.5K tokens). The
-// full simplified body still reaches the model in the current request.
-const STORED_WEB_RESOURCE_CHARS: usize = 6_000;
+// Shortened copy of the scraped page kept in history (~1K tokens, sized for
+// Groq free-tier TPM). The full simplified body still reaches the model in
+// the current request.
+const STORED_WEB_RESOURCE_CHARS: usize = 4_000;
 
 pub async fn search(
     bot: Bot,
@@ -182,7 +183,7 @@ pub async fn search(
             ChatMessage::new_text(Role::User, current_user_msg),
             ChatMessage::new_text(Role::User, web_msg),
         ],
-        3000,
+        2000,
     )
     .await
     {

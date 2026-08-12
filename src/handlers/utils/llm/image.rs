@@ -15,8 +15,9 @@ use teloxide::{
 use tracing::error;
 
 // Keep the vision-model context lean: image analysis only needs the gist of
-// the recent conversation, not full scraped pages.
-const VISION_HISTORY_CHARS: usize = 20_000;
+// the recent conversation, not full scraped pages. ~2K tokens of history,
+// sized for Groq free-tier TPM.
+const VISION_HISTORY_CHARS: usize = 8_000;
 
 // Analyzes a Telegram image using a vision model, guided by the user prompt.
 pub async fn analyze_image(

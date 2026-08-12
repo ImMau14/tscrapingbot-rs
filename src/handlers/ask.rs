@@ -126,7 +126,7 @@ pub async fn ask(
         system_prompt,
         &messages,
         vec![ChatMessage::new_text(Role::User, current_user_msg)],
-        3000,
+        2000,
     )
     .await
     {

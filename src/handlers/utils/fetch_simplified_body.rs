@@ -4,10 +4,10 @@ use kuchiki::NodeRef;
 use kuchiki::traits::*;
 use reqwest;
 
-// Cap the simplified body so one scrape cannot consume the whole model context.
-// ~12K chars ≈ 3K tokens: enough for a page summary, small enough to keep
-// several scrapes inside the conversation window.
-const MAX_BODY_CHARS: usize = 12_000;
+// Cap the simplified body so one scrape cannot consume the whole model
+// context. ~8K chars ≈ 2K tokens: sized to keep the full request under Groq
+// free tier's 8K tokens-per-minute limit.
+const MAX_BODY_CHARS: usize = 8_000;
 
 pub async fn fetch_simplified_body(url: &str) -> Result<String, String> {
     // Map reqwest errors to string descriptions

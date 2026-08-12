@@ -75,10 +75,25 @@ pub fn is_context_length_error(e: &str) -> bool {
     NEEDLES.iter().any(|n| e.contains(n))
 }
 
+/// Groq free tier caps tokens per minute (TPM) and rejects oversize requests
+/// with 413 "Payload Too Large". Match those so we can retry smaller too.
+pub fn is_tpm_error(e: &str) -> bool {
+    let e = e.to_lowercase();
+    const NEEDLES: &[&str] = &[
+        "tokens per minute",
+        "(tpm)",
+        "tpm: limit",
+        "payload too large",
+        "reduce your message size",
+    ];
+    NEEDLES.iter().any(|n| e.contains(n))
+}
+
 /// History char budgets tried in order when the model rejects the request as
-/// too long. First attempt keeps the full budget; each fallback drops older
-/// rows until only the current exchange remains.
-const HISTORY_BUDGETS_CHARS: &[usize] = &[80_000, 35_000, 12_000];
+/// too long. Sized for Groq free tier (8K TPM): the first budget keeps the
+/// request near 4-5K tokens so input + 2K completion stays under the limit;
+/// each fallback drops older rows until only the current exchange remains.
+const HISTORY_BUDGETS_CHARS: &[usize] = &[16_000, 8_000, 4_000];
 
 /// Send a chat completion with a bounded history.
 ///
@@ -141,19 +156,29 @@ pub async fn send_chat_with_history(
             }
             Err(e) => {
                 let msg = e.to_string();
-                if !is_context_length_error(&msg) {
+                if !is_context_length_error(&msg) && !is_tpm_error(&msg) {
                     return Err(msg);
                 }
                 last_err = Some(msg);
                 error!(
-                    "Context length error with {} chars budget; retrying smaller",
+                    "Context/TPM error with {} chars budget; retrying smaller",
                     budget
                 );
             }
         }
     }
 
-    Err(last_err.unwrap_or_else(|| "Model request failed".to_string()))
+    Err(last_err
+        .map(|e| {
+            if is_tpm_error(&e) {
+                format!(
+                    "Groq rate limit (free tier: 8000 tokens/minute). Wait a minute and try again, or /reset to shorten the conversation. {e}"
+                )
+            } else {
+                e
+            }
+        })
+        .unwrap_or_else(|| "Model request failed".to_string()))
 }
 
 #[cfg(test)]
@@ -229,5 +254,16 @@ mod tests {
         ));
         assert!(!is_context_length_error("Rate limited - too many requests"));
         assert!(!is_context_length_error("Invalid API key: bad"));
+    }
+
+    #[test]
+    fn tpm_error_detection() {
+        assert!(is_tpm_error(
+            "413 Payload Too Large: Request too large for model on tokens per minute (TPM): Limit 8000, Requested 8963"
+        ));
+        assert!(is_tpm_error(
+            "please reduce your message size and try again"
+        ));
+        assert!(!is_tpm_error("Rate limited - too many requests"));
     }
 }
